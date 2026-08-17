@@ -1,0 +1,6 @@
+# Tools used only while developing and testing. They are not installed on
+# the live server, which is why they live in a separate file.
+
+pytest==8.3.4      # the test runner: finds and runs everything in tests/
+httpx==0.28.1      # lets tests call the web application without a real network
+ruff==0.9.4        # the code style checker: finds common mistakes automatically

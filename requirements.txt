@@ -1,0 +1,7 @@
+# Libraries the application needs to run.
+# Each future step adds its own libraries here, with a comment saying why.
+
+fastapi            # the web framework: turns Python functions into web endpoints
+uvicorn[standard]  # the server program that runs the FastAPI application
+pydantic           # data validation: checks that data has the right shape
+pydantic-settings  # reads configuration from environment variables and .env files

@@ -1,0 +1,11 @@
+# Settings for ruff, the code style checker.
+# Continuous Integration runs "ruff check ." on every proposed change.
+
+line-length = 100
+target-version = "py312"
+
+[lint]
+# E = style errors (spacing, indentation)
+# F = real mistakes (unused imports, undefined names)
+# I = import ordering (keeps the top of every file tidy and predictable)
+select = ["E", "F", "I"]

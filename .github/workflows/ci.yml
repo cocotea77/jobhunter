@@ -1,0 +1,43 @@
+# Continuous Integration ("CI").
+#
+# In plain words: every time someone proposes a code change on GitHub, this
+# file tells GitHub to check the change automatically on a clean computer.
+# If any check fails, the change cannot be merged into the main code.
+#
+# Step 0 runs two checks:
+#   1. Code style (ruff)   — finds common mistakes and untidy code.
+#   2. Test suite (pytest) — runs every test in the tests/ folder.
+#
+# Later steps will add a third check: the evaluation suite that measures
+# whether the AI agents still behave correctly after a change.
+
+name: CI
+
+on:
+  pull_request:        # run on every proposed change
+  push:
+    branches: [main]   # and on every change that lands on main
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Install Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install the application and the development tools
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Check code style (ruff)
+        run: ruff check .
+
+      - name: Run the test suite (pytest)
+        run: pytest -v

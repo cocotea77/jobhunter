@@ -1,0 +1,20 @@
+# Files Git must never store in the repository.
+
+# Python caches (rebuilt automatically, different on every machine)
+__pycache__/
+*.pyc
+
+# The project's private Python environment (each machine builds its own)
+.venv/
+venv/
+
+# Secrets. The .env file will hold real keys later — it must NEVER be
+# committed. The .env.example file (no real values) IS committed instead.
+.env
+
+# PyCharm's personal settings (colors, window layout — personal per machine)
+.idea/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
