@@ -74,3 +74,48 @@ class Job(Base):
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class AgentRun(Base):
+    """One row per AI round trip — the project's flight recorder.
+
+    Written by app/llm.py (the gateway) on every call, success or failure.
+    Nothing else writes here; everything that wants to know "which agent,
+    how many calls, how slow, how much money" reads from here — the
+    /metrics endpoint today, the spending stop (Step 8) and the evaluation
+    harness (Step 6) later. One door in, many readers out.
+    """
+
+    __tablename__ = "agent_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # Who asked: "resume_parser", "coach", "demo" ... — the label every
+    # metric is grouped by.
+    agent: Mapped[str]
+
+    # Which model answered: "claude-sonnet-4-6", "fake", ...
+    model: Mapped[str]
+
+    # How long the round trip took, in milliseconds.
+    latency_ms: Mapped[int]
+
+    # How much text went in and came out, in tokens (word pieces).
+    # Output tokens are the expensive kind.
+    input_tokens: Mapped[int]
+    output_tokens: Mapped[int]
+
+    # What this single call cost, in US dollars, computed from the price
+    # table at call time. Small numbers that add up — which is the point
+    # of recording them.
+    cost_usd: Mapped[float]
+
+    # Did the call succeed? Failures are recorded too (success=False plus
+    # the error text) — an invisible failure cannot be fixed.
+    success: Mapped[bool]
+    error: Mapped[str | None] = mapped_column(Text)
+
+    # When it happened. The database fills this in itself.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

@@ -64,8 +64,10 @@ def test_migrations_have_been_applied():
 
     If this fails, the database exists but `alembic upgrade head` has not
     been run against it — the exact mistake this test exists to catch.
+    (This assertion changes in every step that adds a migration: it always
+    names the latest one. Step 2's migration is "0002".)
     """
-    assert _fetch_one("SELECT version_num FROM alembic_version") == "0001"
+    assert _fetch_one("SELECT version_num FROM alembic_version") == "0002"
 
 
 def test_jobs_table_exists():
@@ -108,3 +110,43 @@ def test_database_refuses_duplicate_postings():
             await connection.close()
 
     asyncio.run(go())
+
+
+def test_agent_runs_table_exists():
+    """Step 2's flight-recorder table was created by migration 0002."""
+    assert _fetch_one("SELECT to_regclass('public.agent_runs')") == "agent_runs"
+
+
+def test_gateway_writes_a_real_row_and_metrics_reports_it():
+    """End to end through the real machinery: a fake-mode gateway call must
+    produce a real row in agent_runs, and /metrics must aggregate it.
+
+    (The unit tests in test_llm.py replace the database write; this test is
+    the other half of the promise — the write itself works.)
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    before = _fetch_one("SELECT count(*) FROM agent_runs WHERE agent = 'demo'")
+
+    # The "with" matters: it keeps ONE event loop alive for both requests.
+    # Without it, each request gets its own loop, and the application's
+    # pooled database connections — created in the first request's loop —
+    # explode with "Event loop is closed" in the second. A real bug this
+    # test originally had, caught by running it. Remember the shape of
+    # that error message; you will meet it again in async Python.
+    with TestClient(app) as client:
+        response = client.post("/demo/ai", json={"text": "Hello gateway."})
+        assert response.status_code == 200
+        assert set(response.json()) == {"summary", "tone", "word_count"}
+
+        metrics = client.get("/metrics").json()
+
+    after = _fetch_one("SELECT count(*) FROM agent_runs WHERE agent = 'demo'")
+    assert after == before + 1
+
+    demo_rows = [row for row in metrics if row["agent"] == "demo"]
+    assert len(demo_rows) == 1
+    assert demo_rows[0]["calls"] >= 1
+    assert demo_rows[0]["total_cost_usd"] == 0.0  # fake mode is free

@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # The application's own name and version, reported by the health endpoint
     # so you can always ask a running server "who and what are you?".
     app_name: str = "JobHunter"
-    version: str = "0.2.0"
+    version: str = "0.3.0"
 
     # Which environment this copy believes it is in. Later steps will use
     # this to refuse dangerous actions in production (for example, a
@@ -62,6 +62,37 @@ class Settings(BaseSettings):
         if value.startswith("postgresql://"):
             return value.replace("postgresql://", "postgresql+asyncpg://", 1)
         return value
+
+
+    # --- Step 2: the AI gateway ---
+
+    # Fake mode. True (the default) means: never call the real AI service;
+    # return realistic canned answers instead. A fresh checkout therefore
+    # runs for a student with no key and costs nothing — the same
+    # "works instantly, spends nothing" principle as the database default.
+    # Continuous Integration keeps this True forever, so the automatic
+    # checks can never spend money. You switch it off deliberately, in your
+    # local ".env" file, when you want real intelligence:
+    #
+    #   FAKE_AI=false
+    #   ANTHROPIC_API_KEY=sk-ant-...
+    fake_ai: bool = True
+
+    # The secret key for the AI service. Empty by default on purpose:
+    # the key lives in ".env" (which Git ignores) or in the live server's
+    # environment variables — never in code, never in the repository.
+    anthropic_api_key: str = ""
+
+    # Which model to use. One knob, changed in one place. Later steps add
+    # a second, cheaper model for high-volume simple work; the gateway
+    # already records the model per call, so the split will be measurable.
+    ai_model: str = "claude-sonnet-4-6"
+
+    # A safety ceiling on answer length, in tokens (roughly: pieces of
+    # words; 1000 tokens is about 750 English words). Callers may ask for
+    # less, never for more. Output tokens are the expensive kind, so this
+    # is the first, crude cost control — Step 8 adds the real one.
+    ai_max_output_tokens: int = 2048
 
 
 # One shared instance, imported everywhere else as:  from app.config import settings
