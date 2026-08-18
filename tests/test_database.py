@@ -150,3 +150,55 @@ def test_gateway_writes_a_real_row_and_metrics_reports_it():
     assert len(demo_rows) == 1
     assert demo_rows[0]["calls"] >= 1
     assert demo_rows[0]["total_cost_usd"] == 0.0  # fake mode is free
+
+
+def test_storing_the_same_batch_twice_adds_nothing_the_second_time():
+    """Idempotency, proven against the real database: the first store adds
+    rows; the identical second store adds zero — the Step 1 constraint
+    plus "on conflict do nothing", working exactly as promised. The test
+    cleans up after itself."""
+    import asyncio as aio
+
+    from app.ingestion.pipeline import store
+    from app.ingestion.sources import RawPosting
+
+    batch = [
+        RawPosting(
+            source="itest",
+            external_id=f"idem-{n}",
+            company="ITestCo",
+            title="Engineer",
+            location=None,
+            description="x",
+            url="http://example.com",
+            posted_at=None,
+        )
+        for n in range(3)
+    ]
+    # Both stores run inside ONE event loop — the same lesson as the
+    # gateway test above: the application's pooled connections belong to
+    # the loop that created them; a second asyncio.run() is a second loop.
+    async def run_both_and_cleanup() -> tuple[int, int]:
+        # One more layer of the same onion: earlier tests may have used the
+        # application's engine in THEIR loops, leaving pooled connections
+        # that belong to loops which no longer exist. dispose(close=False)
+        # says: "discard the pool; do not try to close those connections —
+        # their loop is gone." SQLAlchemy provides it for exactly this
+        # situation. Fresh loop, fresh pool, deterministic test.
+        from app.db import engine
+
+        await engine.dispose(close=False)
+        try:
+            first = await store(batch)
+            second = await store(batch)
+            return first, second
+        finally:
+            connection = await asyncpg.connect(DATABASE_URL, timeout=2)
+            try:
+                await connection.execute("DELETE FROM jobs WHERE source = 'itest'")
+            finally:
+                await connection.close()
+
+    first, second = aio.run(run_both_and_cleanup())
+    assert first == 3   # first time: three new rows
+    assert second == 0  # second time: nothing new — idempotency, proven

@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # The application's own name and version, reported by the health endpoint
     # so you can always ask a running server "who and what are you?".
     app_name: str = "JobHunter"
-    version: str = "0.3.0"
+    version: str = "0.4.0"
 
     # Which environment this copy believes it is in. Later steps will use
     # this to refuse dangerous actions in production (for example, a
@@ -94,6 +94,18 @@ class Settings(BaseSettings):
     # is the first, crude cost control — Step 8 adds the real one.
     ai_max_output_tokens: int = 2048
 
+
+    # --- Step 3: ingestion ---
+
+    # How long to wait for one job source before giving up on it, in
+    # seconds. A slow source must never be able to hang the whole
+    # ingestion run — the same fail-fast principle as the health
+    # endpoint's 2-second database limit.
+    ingestion_timeout_seconds: float = 20.0
+
+    # How many sources to fetch at the same time. Polite concurrency:
+    # fast for us, gentle on the boards' servers.
+    ingestion_concurrency: int = 5
 
 # One shared instance, imported everywhere else as:  from app.config import settings
 settings = Settings()

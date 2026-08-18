@@ -14,3 +14,7 @@ alembic                  # database migrations: versioned, reviewable schema cha
 
 # --- Step 2: the AI gateway ---
 anthropic                # the official client for the Claude AI service
+
+# --- Step 3: ingestion ---
+httpx                    # talks to the job boards' public web interfaces
+beautifulsoup4           # turns HTML job descriptions into clean readable text
