@@ -21,6 +21,8 @@ from sqlalchemy import text as sql
 
 from app.config import settings
 from app.db import database_status, session_factory
+from app.ingestion.boards import GREENHOUSE_BOARDS, LEVER_COMPANIES
+from app.ingestion.pipeline import IngestReport, IngestRequest, ingest
 from app.llm import generate_structured
 
 app = FastAPI(title=settings.app_name, version=settings.version)
@@ -130,4 +132,34 @@ async def demo_ai(request: DemoRequest) -> DemoAnalysis:
             "tone": "neutral",
             "word_count": 9,
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Step 3: ingestion — filling the jobs table with real postings.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/ingest")
+async def ingest_jobs(request: IngestRequest) -> IngestReport:
+    """Fetch postings from the requested sources and store them.
+
+    Duplicate-safe by construction (the Step 1 constraint), and one dead
+    source never kills the run — it lands in source_errors instead.
+    Run the same request twice: the second report shows new: 0. That is
+    idempotency, visible in the numbers.
+    """
+    return await ingest(request)
+
+
+@app.post("/ingest/curated")
+async def ingest_curated() -> IngestReport:
+    """Fetch the entire curated company-board list (app/ingestion/boards.py).
+
+    This is the button the nightly refresh will press in Step 10 — built
+    now so it can be tested by hand long before it is scheduled. Expect it
+    to take a few minutes: it is politely fetching dozens of real boards.
+    """
+    return await ingest(
+        IngestRequest(greenhouse=GREENHOUSE_BOARDS, lever=LEVER_COMPANIES)
     )
