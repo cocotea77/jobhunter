@@ -4,12 +4,19 @@
 # file tells GitHub to check the change automatically on a clean computer.
 # If any check fails, the change cannot be merged into the main code.
 #
-# Step 0 runs two checks:
-#   1. Code style (ruff)   — finds common mistakes and untidy code.
-#   2. Test suite (pytest) — runs every test in the tests/ folder.
+# Step 1 upgrade: the checking computer now starts a REAL Postgres database
+# (the same pgvector image we use locally) before running the checks, and
+# the checks grew from two to five:
 #
-# Later steps will add a third check: the evaluation suite that measures
-# whether the AI agents still behave correctly after a change.
+#   1. Code style (ruff)
+#   2. Migrations apply cleanly to an empty database
+#   3. No drift: the models and the migrations describe the same schema
+#   4. Migrations can be reversed and re-applied (downgrade -> upgrade)
+#   5. The full test suite — including the real-database integration tests,
+#      which are never skipped here
+#
+# Checks 2-4 mean a broken migration is caught on the Pull Request,
+# not during a deployment to the live website.
 
 name: CI
 
@@ -21,6 +28,29 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
+
+    # A throwaway database, created fresh for every run and destroyed
+    # afterwards — identical in image and credentials to docker-compose.yml.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: jobhunter
+          POSTGRES_PASSWORD: jobhunter
+          POSTGRES_DB: jobhunter
+        ports:
+          - 5432:5432
+        # GitHub waits until the database reports "ready" before starting
+        # our steps, so the checks never race a half-started database.
+        options: >-
+          --health-cmd "pg_isready -U jobhunter -d jobhunter"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://jobhunter:jobhunter@localhost:5432/jobhunter
+
     steps:
       - name: Get the code
         uses: actions/checkout@v4
@@ -38,6 +68,17 @@ jobs:
 
       - name: Check code style (ruff)
         run: ruff check .
+
+      - name: Apply all migrations to an empty database
+        run: alembic upgrade head
+
+      - name: Check for drift between models and migrations
+        run: alembic check
+
+      - name: Prove migrations are reversible
+        run: |
+          alembic downgrade base
+          alembic upgrade head
 
       - name: Run the test suite (pytest)
         run: pytest -v

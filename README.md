@@ -1,4 +1,4 @@
-# JobPilot
+# JobHunter
 
 An AI-powered job-search product, built step by step to production
 standard: a visitor uploads a resume, the system matches it against tens of
@@ -9,9 +9,11 @@ plain language, assuming no prior knowledge, and each step's changes were
 merged through a reviewed Pull Request with green automatic checks — so the
 project's history itself teaches the workflow.
 
-**Current step: 0 — the professional workspace.**
-A running web server, a test suite, a code style checker, and Continuous
-Integration that blocks broken changes from reaching the main branch.
+**Current step: 1 — the database, managed properly.**
+Postgres with pgvector running in Docker; the first table; every schema
+change made through versioned migration scripts from the very first table;
+Continuous Integration that now starts a real database and proves every
+migration applies, matches the models, and can be reversed.
 
 ## Run it
 
@@ -29,4 +31,12 @@ ruff check .
 pytest -v
 ```
 
-Full instructions for students: `docs/00_STEP0_WORKSPACE.md`.
+Start the database, then apply the migrations:
+
+```bash
+docker compose up -d
+alembic upgrade head
+```
+
+Full instructions for students: `docs/00_STEP0_WORKSPACE.md`, then
+`docs/01_STEP1_DATABASE.md`.
