@@ -15,7 +15,7 @@ def test_defaults_allow_a_fresh_checkout_to_run():
     This is why a student can clone the repository and run it immediately.
     """
     s = Settings(_env_file=None)  # ignore any local .env file for this test
-    assert s.app_name == "JobPilot"
+    assert s.app_name == "JobHunter"
     assert s.environment == "development"
 
 
@@ -39,3 +39,31 @@ def test_invalid_environment_is_rejected(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "prodcution")  # deliberate typo
     with pytest.raises(Exception):
         Settings(_env_file=None)
+
+
+# --- Step 1: the database address normalizer ---
+#
+# Hosting companies (Railway, Heroku, ...) hand out database addresses that
+# start with "postgres://". Our driver needs "postgresql+asyncpg://". The
+# Settings class repairs the address automatically — these tests prove it,
+# because a wrong database address is the most common reason a first
+# deployment fails.
+
+
+def test_short_postgres_scheme_is_repaired():
+    """The old "postgres://" spelling must be rewritten for our driver."""
+    s = Settings(_env_file=None, database_url="postgres://u:pw@host:5432/db")
+    assert s.database_url == "postgresql+asyncpg://u:pw@host:5432/db"
+
+
+def test_plain_postgresql_scheme_is_repaired():
+    """The driverless "postgresql://" spelling must also be rewritten."""
+    s = Settings(_env_file=None, database_url="postgresql://u:pw@host:5432/db")
+    assert s.database_url == "postgresql+asyncpg://u:pw@host:5432/db"
+
+
+def test_correct_address_is_left_untouched():
+    """An address that is already correct must pass through unchanged."""
+    url = "postgresql+asyncpg://u:pw@host:5432/db"
+    s = Settings(_env_file=None, database_url=url)
+    assert s.database_url == url

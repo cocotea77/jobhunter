@@ -1,0 +1,47 @@
+# Docker Compose file: describes the supporting services this project needs.
+# So far there is exactly one — the Postgres database.
+#
+# Start it:            docker compose up -d        (-d = run in the background)
+# Check it:            docker compose ps           (should say "healthy")
+# Stop it:             docker compose stop         (data is kept)
+# Delete completely:   docker compose down -v      (-v also deletes the data!)
+
+services:
+  db:
+    # Why this image and not plain "postgres:16": it is the official Postgres
+    # 16 image with the "pgvector" extension already compiled in. Later steps
+    # store AI embeddings (lists of numbers that capture meaning) in the
+    # database, and pgvector is what makes that possible. Choosing the right
+    # image on day one means we never have to swap databases mid-project.
+    image: pgvector/pgvector:pg16
+
+    environment:
+      # These create the database and its user on first start.
+      # They are development-only credentials, fine to commit publicly.
+      # The real production database will use different, secret values,
+      # supplied through environment variables — never through this file.
+      POSTGRES_USER: jobhunter
+      POSTGRES_PASSWORD: jobhunter
+      POSTGRES_DB: jobhunter
+
+    ports:
+      # host:container — programs on your Mac reach the database at
+      # localhost:5432, which is exactly what our default DATABASE_URL says.
+      - "5432:5432"
+
+    volumes:
+      # A named volume: the database's files live here, OUTSIDE the
+      # container. You can delete and recreate the container freely and
+      # your data survives. Only "docker compose down -v" deletes it.
+      - dbdata:/var/lib/postgresql/data
+
+    healthcheck:
+      # Docker asks the database every few seconds: "ready to accept
+      # connections?" — so "docker compose ps" can honestly say "healthy".
+      test: ["CMD-SHELL", "pg_isready -U jobhunter -d jobhunter"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dbdata:
