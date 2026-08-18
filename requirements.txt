@@ -11,3 +11,6 @@ pydantic-settings        # reads configuration from environment variables and .e
 sqlalchemy[asyncio]>=2.0 # talks to the database from Python; [asyncio] = non-blocking mode
 asyncpg                  # the fast Postgres driver that SQLAlchemy uses underneath
 alembic                  # database migrations: versioned, reviewable schema changes
+
+# --- Step 2: the AI gateway ---
+anthropic                # the official client for the Claude AI service
