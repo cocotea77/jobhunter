@@ -27,9 +27,7 @@ class Settings(BaseSettings):
     # The application's own name and version, reported by the health endpoint
     # so you can always ask a running server "who and what are you?".
     app_name: str = "JobHunter"
-
-    version: str = "0.6.0"
-
+    version: str = "0.7.0"
 
     # Which environment this copy believes it is in. Later steps will use
     # this to refuse dangerous actions in production (for example, a
@@ -130,7 +128,6 @@ class Settings(BaseSettings):
     match_top_n_llm: int = 8
     match_concurrency: int = 4
 
-
     # --- Step 5: the agent layer ---
 
     # The coach may make at most this many model round trips per user
@@ -148,6 +145,12 @@ class Settings(BaseSettings):
 
     # Input guardrail: the longest user message we accept.
     chat_max_message_chars: int = 4000
+
+    # --- Step 6: the evaluation harness ---
+
+    # Which model judges the agents in real-mode eval runs. A judge may be
+    # a different (often stronger) model than the agent it audits.
+    judge_model: str = "claude-sonnet-4-6"
 
 # One shared instance, imported everywhere else as:  from app.config import settings
 settings = Settings()

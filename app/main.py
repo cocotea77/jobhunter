@@ -319,3 +319,40 @@ async def session_messages(candidate_id: int, session_id: int) -> list[dict]:
         }
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Step 6: the quality ledger.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/evals/runs")
+async def eval_runs() -> list[dict]:
+    """Eval run history, newest first — pass rates and per-run cost.
+    The dashboard page over this data arrives with the frontend (Step 9)."""
+    from app.models import EvalRun
+
+    async with session_factory() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(EvalRun).order_by(EvalRun.created_at.desc()).limit(50)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return [
+        {
+            "run_id": row.id,
+            "suite": row.suite,
+            "note": row.note,
+            "mode": "fake" if row.fake_mode else "real",
+            "passed": row.passed,
+            "total": row.total,
+            "pass_rate": row.pass_rate,
+            "cost_usd": row.cost_usd,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in rows
+    ]

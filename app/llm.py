@@ -30,6 +30,7 @@ golden examples of the evaluation harness.
 
 import json
 import time
+from contextvars import ContextVar
 
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
@@ -42,6 +43,14 @@ from app.models import AgentRun
 # What one million tokens cost, in US dollars: (input price, output price).
 # These numbers change over time — check the provider's pricing page when
 # you change models. "fake" is free by definition.
+# Which eval run (if any) the current code is executing inside. The
+# runner sets it; record_run reads it; every AI call made anywhere in the
+# call tree — agents, sub-agents, judges — is automatically tagged. That
+# is how one eval run can report its own exact cost: SUM(cost_usd) over
+# agent_runs WHERE run_id = this run. NULL means organic (production)
+# traffic.
+current_run_id: ContextVar[str | None] = ContextVar("current_run_id", default=None)
+
 PRICES_PER_MILLION_TOKENS: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-haiku-4-5": (1.00, 5.00),
@@ -84,6 +93,7 @@ async def record_run(
         async with session_factory() as session:
             await session.execute(
                 insert(AgentRun).values(
+                    run_id=current_run_id.get(),
                     agent=agent,
                     model=model,
                     latency_ms=latency_ms,
