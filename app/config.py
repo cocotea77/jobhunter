@@ -27,7 +27,9 @@ class Settings(BaseSettings):
     # The application's own name and version, reported by the health endpoint
     # so you can always ask a running server "who and what are you?".
     app_name: str = "JobHunter"
-    version: str = "0.5.0"
+
+    version: str = "0.6.0"
+
 
     # Which environment this copy believes it is in. Later steps will use
     # this to refuse dangerous actions in production (for example, a
@@ -127,6 +129,25 @@ class Settings(BaseSettings):
     match_top_k_vector: int = 25
     match_top_n_llm: int = 8
     match_concurrency: int = 4
+
+
+    # --- Step 5: the agent layer ---
+
+    # The coach may make at most this many model round trips per user
+    # message. An agent loop without a cap is an unbounded bill and an
+    # unbounded wait — the cap is the difference between "agentic" and
+    # "runaway".
+    coach_max_iterations: int = 5
+
+    # The whole chat turn — model calls, tool executions, everything —
+    # must finish inside this wall-clock budget. Generous on purpose:
+    # a turn that triggers run_matching legitimately takes ~30-60s in
+    # real mode. On timeout the user gets an honest fallback, never a
+    # hang.
+    chat_timeout_seconds: float = 120.0
+
+    # Input guardrail: the longest user message we accept.
+    chat_max_message_chars: int = 4000
 
 # One shared instance, imported everywhere else as:  from app.config import settings
 settings = Settings()

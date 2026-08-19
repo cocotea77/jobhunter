@@ -183,3 +183,59 @@ class Match(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+
+class TailoredResume(Base):
+    """One tailored resume: candidate + target job + the agent's output.
+
+    content holds the full TailoredContent — including gaps_not_claimed
+    and change_log, the honesty evidence Step 6's judge will read against
+    candidates.raw_text.
+    """
+
+    __tablename__ = "tailored_resumes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE")
+    )
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"))
+    content: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ChatSession(Base):
+    """One conversation between one candidate and the coach."""
+
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ChatMessage(Base):
+    """One message in a session. role is "user" or "assistant"; assistant
+    rows carry meta: which tools ran, latency, whether the turn timed out
+    — the observable trace of every agentic decision."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("chat_sessions.id", ondelete="CASCADE")
+    )
+    role: Mapped[str]
+    content: Mapped[str] = mapped_column(Text)
+    meta: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+

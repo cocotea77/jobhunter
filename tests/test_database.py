@@ -65,9 +65,11 @@ def test_migrations_have_been_applied():
     If this fails, the database exists but `alembic upgrade head` has not
     been run against it — the exact mistake this test exists to catch.
     (This assertion changes in every step that adds a migration: it always
-    names the latest one. Step 4's migration is "0003".)
+
+    names the latest one. Step 5's migration is "0004".)
     """
-    assert _fetch_one("SELECT version_num FROM alembic_version") == "0003"
+    assert _fetch_one("SELECT version_num FROM alembic_version") == "0004"
+
 
 
 def test_jobs_table_exists():
@@ -123,6 +125,14 @@ def test_candidates_and_matches_tables_exist():
     assert _fetch_one("SELECT to_regclass('public.matches')") == "matches"
 
 
+
+def test_agent_layer_tables_exist():
+    """Step 5's tables were created by migration 0004."""
+    for table in ("tailored_resumes", "chat_sessions", "chat_messages"):
+        assert _fetch_one(f"SELECT to_regclass('public.{table}')") == table
+
+
+
 def test_full_product_flow_upload_match_rank_in_fake_mode():
     """The whole Step 4 loop, end to end, through the real machinery:
     seed jobs -> embed -> upload a resume -> parse (fake) -> match ->
@@ -151,6 +161,7 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
         ])
     ]
 
+
     async def seed():
         from app.db import engine
 
@@ -161,6 +172,7 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
     embedded = aio.run(seed())
     assert embedded >= 3  # ours, plus any strays lacking vectors
 
+
     # Discard the seeding loop's connection pool before the web client
     # opens its own loop — otherwise the recorder inside the app borrows a
     # dead-loop connection, its protective catch swallows the write (the
@@ -168,6 +180,7 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
     # silently missing. Observed exactly once, then pinned here forever.
     async def fresh_pool():
         from app.db import engine
+
 
         await engine.dispose(close=False)
 
@@ -220,6 +233,7 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
                 await connection.execute("DELETE FROM jobs WHERE source = 'itest'")
             finally:
                 await connection.close()
+
 
         aio.run(cleanup())
 
@@ -274,3 +288,132 @@ def test_storing_the_same_batch_twice_adds_nothing_the_second_time():
     first, second = aio.run(run_both_and_cleanup())
     assert first == 3   # first time: three new rows
     assert second == 0  # second time: nothing new — idempotency, proven
+
+
+def test_agent_layer_flow_tailor_and_coach_in_fake_mode():
+    """Step 5 end to end through the real machinery: tailor a resume for
+    a real stored job; hold a two-turn coach conversation that uses tools
+    (including the tailor sub-agent); verify the transcript, its per-turn
+    metadata, and the security boundary. Free, real database, cleans up.
+    """
+    import asyncio as aio
+
+    from fastapi.testclient import TestClient
+
+    from app.ingestion.pipeline import embed_missing_jobs, store
+    from app.ingestion.sources import RawPosting
+    from app.main import app
+
+    jobs = [
+        RawPosting(
+            source="itest5", external_id=f"a-{n}", company="AgentCo",
+            title=title, location=None, url="http://example.com",
+            posted_at=None, description=desc,
+        )
+        for n, (title, desc) in enumerate([
+            ("Python Platform Engineer", "python sql docker platform services"),
+            ("Data Engineer", "python sql pipelines warehouses"),
+        ])
+    ]
+
+    async def seed():
+        from app.db import engine
+
+        await engine.dispose(close=False)
+        await store(jobs)
+        await embed_missing_jobs()
+
+    aio.run(seed())
+
+    async def fresh_pool():
+        from app.db import engine
+
+        await engine.dispose(close=False)
+
+    aio.run(fresh_pool())
+
+    candidate_id = None
+    intruder_id = None
+    try:
+        with TestClient(app) as client:
+            candidate_id = client.post(
+                "/candidates",
+                files={"file": ("r.txt", b"python sql docker engineer", "text/plain")},
+            ).json()["id"]
+            client.post(f"/candidates/{candidate_id}/match")
+
+            # Direct tailoring: pick the top match's real job_id.
+            top_job = client.get(f"/candidates/{candidate_id}/matches").json()[0]
+            tailored = client.post(
+                f"/candidates/{candidate_id}/jobs/{top_job['job_id']}/tailor"
+            )
+            assert tailored.status_code == 200
+            content = tailored.json()["content"]
+            assert content["gaps_not_claimed"] and content["change_log"]
+
+            # Coach turn 1: it must LOOK, then answer from the data.
+            turn1 = client.post(
+                f"/candidates/{candidate_id}/chat",
+                json={"message": "What are my top matches?"},
+            ).json()
+            session_id = turn1["session_id"]
+            assert "list_matches" in turn1["tools_used"]
+            assert turn1["timed_out"] is False
+            assert "AgentCo" in turn1["reply"] or "Engineer" in turn1["reply"]
+
+            # Coach turn 2, same session: delegate to the tailor sub-agent.
+            before = len(client.get(f"/candidates/{candidate_id}/tailored").json())
+            turn2 = client.post(
+                f"/candidates/{candidate_id}/chat",
+                json={"message": "Please tailor my resume for the top match.",
+                      "session_id": session_id},
+            ).json()
+            assert "tailor_resume" in turn2["tools_used"]
+            after = len(client.get(f"/candidates/{candidate_id}/tailored").json())
+            assert after == before + 1  # the sub-agent really saved a row
+
+            # The transcript: 4 messages, assistant rows carrying metadata.
+            transcript = client.get(
+                f"/candidates/{candidate_id}/sessions/{session_id}/messages"
+            ).json()
+            assert [m["role"] for m in transcript] == [
+                "user", "assistant", "user", "assistant"
+            ]
+            assert transcript[1]["meta"]["tools_used"] == turn1["tools_used"]
+            assert transcript[1]["meta"]["latency_ms"] >= 0
+
+            # The security boundary: another candidate cannot enter this
+            # session — and is told "not found", not "forbidden".
+            intruder_id = client.post(
+                "/candidates",
+                files={"file": ("r2.txt", b"marketing person", "text/plain")},
+            ).json()["id"]
+            stolen = client.post(
+                f"/candidates/{intruder_id}/chat",
+                json={"message": "hi", "session_id": session_id},
+            )
+            assert stolen.status_code == 404
+
+            # Supervisor validation over HTTP: empty message -> 400.
+            assert client.post(
+                f"/candidates/{candidate_id}/chat", json={"message": ""}
+            ).status_code == 400
+
+            # Every agent of the step appeared in the flight recorder.
+            agents = {row["agent"] for row in client.get("/metrics").json()}
+            assert {"resume_tailor", "coach"} <= agents
+    finally:
+
+        async def cleanup():
+            connection = await asyncpg.connect(DATABASE_URL, timeout=2)
+            try:
+                for cid in (candidate_id, intruder_id):
+                    if cid is not None:
+                        await connection.execute(
+                            f"DELETE FROM candidates WHERE id = {cid}"
+                        )
+                await connection.execute("DELETE FROM jobs WHERE source = 'itest5'")
+            finally:
+                await connection.close()
+
+        aio.run(cleanup())

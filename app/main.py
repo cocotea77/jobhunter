@@ -16,15 +16,28 @@ while its database is down would be lying to every tool that protects us.
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+
+from pydantic import BaseModel
+
 from sqlalchemy import select
 from sqlalchemy import text as sql
 
+from app.agents.orchestrator import handle_chat
+from app.agents.tailor import generate_tailored_content
 from app.config import settings
 from app.db import database_status, session_factory
 from app.embeddings import embed_texts
 from app.matching import run_matching
-from app.models import Candidate, Job, Match
-from app.resume import ResumeExtractionError, extract_text, parse_resume, profile_card
+
+from app.models import Candidate, Job, Match, TailoredResume
+from app.resume import (
+    CandidateProfile,
+    ResumeExtractionError,
+    extract_text,
+    parse_resume,
+    profile_card,
+)
+
 
 app = FastAPI(title=settings.app_name, version=settings.version)
 
@@ -116,6 +129,7 @@ async def create_candidate(file: UploadFile = File(...)) -> dict:
         # The file's fault, said kindly: 400 (bad request), with the reason.
         raise HTTPException(status_code=400, detail=str(error)) from error
 
+
     profile = await parse_resume(text)
     [vector] = await embed_texts([profile_card(profile)])
 
@@ -205,4 +219,120 @@ async def list_matches(candidate_id: int) -> list[dict]:
             "analysis": match.analysis,
         }
         for match, title, company, url, location in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Step 5: the agent layer — tailoring and coaching.
+# ---------------------------------------------------------------------------
+
+
+    async with session_factory() as session:
+        candidate = Candidate(
+            name=profile.name,
+            raw_text=text,
+            profile=profile.model_dump(),
+            embedding=vector,
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
+@app.post("/candidates/{candidate_id}/jobs/{job_id}/tailor")
+async def tailor(candidate_id: int, job_id: int) -> dict:
+    """Tailor this candidate's resume toward this job, and save it.
+    ~15-45 seconds in real mode; instant in fake mode."""
+    async with session_factory() as session:
+        candidate = await session.get(Candidate, candidate_id)
+        job = await session.get(Job, job_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="candidate not found")
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    content = await generate_tailored_content(
+        CandidateProfile.model_validate(candidate.profile),
+        candidate.raw_text,
+        job.title,
+        job.company,
+        job.description,
+    )
+    async with session_factory() as session:
+        row = TailoredResume(
+            candidate_id=candidate_id, job_id=job_id, content=content.model_dump()
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return {"id": row.id, "job_id": job_id, "content": row.content}
+
+
+@app.get("/candidates/{candidate_id}/tailored")
+async def list_tailored(candidate_id: int) -> list[dict]:
+    async with session_factory() as session:
+        if await session.get(Candidate, candidate_id) is None:
+            raise HTTPException(status_code=404, detail="candidate not found")
+        rows = (
+            await session.execute(
+                select(TailoredResume, Job.title, Job.company)
+                .join(Job, Job.id == TailoredResume.job_id)
+                .where(TailoredResume.candidate_id == candidate_id)
+                .order_by(TailoredResume.created_at.desc())
+            )
+        ).all()
+    return [
+        {
+            "id": row.id,
+            "job_id": row.job_id,
+            "title": title,
+            "company": company,
+            "content": row.content,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row, title, company in rows
+    ]
+
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: int | None = None
+
+
+@app.post("/candidates/{candidate_id}/chat")
+async def chat(candidate_id: int, request: ChatRequest) -> dict:
+    """One supervised coach turn. The orchestrator owns validation,
+    session identity, the timeout, and the transcript."""
+    try:
+        return await handle_chat(candidate_id, request.message, request.session_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/candidates/{candidate_id}/sessions/{session_id}/messages")
+async def session_messages(candidate_id: int, session_id: int) -> list[dict]:
+    """The stored transcript — the observable trace of every turn."""
+    from app.models import ChatMessage, ChatSession
+
+    async with session_factory() as session:
+        chat_session = await session.get(ChatSession, session_id)
+        if chat_session is None or chat_session.candidate_id != candidate_id:
+            raise HTTPException(status_code=404, detail="session not found")
+        rows = (
+            await session.execute(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.id)
+            )
+        ).scalars().all()
+    return [
+        {
+            "role": row.role,
+            "content": row.content,
+            "meta": row.meta,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in rows
+
     ]
