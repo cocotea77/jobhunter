@@ -14,16 +14,26 @@ uptime monitor alerts on any non-200. A health endpoint that answers 200
 while its database is down would be lying to every tool that protects us.
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy import text as sql
 
+from app.agents.orchestrator import handle_chat
+from app.agents.tailor import generate_tailored_content
 from app.config import settings
 from app.db import database_status, session_factory
-from app.ingestion.boards import GREENHOUSE_BOARDS, LEVER_COMPANIES
-from app.ingestion.pipeline import IngestReport, IngestRequest, ingest
-from app.llm import generate_structured
+from app.embeddings import embed_texts
+from app.matching import run_matching
+from app.models import Candidate, Job, Match, TailoredResume
+from app.resume import (
+    CandidateProfile,
+    ResumeExtractionError,
+    extract_text,
+    parse_resume,
+    profile_card,
+)
 
 app = FastAPI(title=settings.app_name, version=settings.version)
 
@@ -94,72 +104,218 @@ async def metrics() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Step 2: a TEMPORARY demonstration endpoint.
-#
-# It exists so you can watch the gateway work end to end — call it, then
-# see the recorded round trip appear in /metrics — before any real agent
-# exists. It will be REMOVED in Step 4, when the first real agent (the
-# resume parser) replaces it. Scaffolding, clearly labeled as scaffolding.
+# Step 4: candidates and matching — the product's core loop.
 # ---------------------------------------------------------------------------
 
 
-class DemoRequest(BaseModel):
-    text: str
+@app.post("/candidates")
+async def create_candidate(file: UploadFile = File(...)) -> dict:
+    """Upload a resume; receive an understood candidate.
 
-
-class DemoAnalysis(BaseModel):
-    """The exact shape the demo answer must have — enforced, not hoped for."""
-
-    summary: str
-    tone: str
-    word_count: int
-
-
-@app.post("/demo/ai")
-async def demo_ai(request: DemoRequest) -> DemoAnalysis:
-    """Analyze a snippet of text through the gateway.
-
-    In fake mode (the default) this answers instantly and costs nothing;
-    with FAKE_AI=false and a real key in .env it exercises the real model.
-    Either way, the round trip is recorded in agent_runs — check /metrics.
+    The chain: extract text (mechanical) → parse into a profile (the
+    resume_parser agent, honesty-constrained) → embed the profile card
+    (stage one of matching will search with it) → store all three: raw
+    text, profile, vector. The raw text is kept forever unmodified — it
+    is the ground truth every AI claim about this person must trace to.
     """
-    return await generate_structured(
-        agent="demo",
-        prompt=f"Analyze this text:\n\n{request.text}",
-        schema=DemoAnalysis,
-        fake_response={
-            "summary": "A short note about testing the AI gateway.",
-            "tone": "neutral",
-            "word_count": 9,
-        },
+    content = await file.read()
+    try:
+        text = extract_text(file.filename or "resume", content)
+    except ResumeExtractionError as error:
+        # The file's fault, said kindly: 400 (bad request), with the reason.
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    profile = await parse_resume(text)
+    [vector] = await embed_texts([profile_card(profile)])
+
+    async with session_factory() as session:
+        candidate = Candidate(
+            name=profile.name,
+            raw_text=text,
+            profile=profile.model_dump(),
+            embedding=vector,
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
+    return {"id": candidate.id, "name": candidate.name, "profile": candidate.profile}
+
+
+@app.get("/candidates")
+async def list_candidates() -> list[dict]:
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                select(Candidate.id, Candidate.name, Candidate.created_at)
+                .order_by(Candidate.created_at.desc())
+            )
+        ).all()
+    return [
+        {"id": r.id, "name": r.name, "created_at": r.created_at.isoformat()}
+        for r in rows
+    ]
+
+
+@app.get("/candidates/{candidate_id}")
+async def get_candidate(candidate_id: int) -> dict:
+    async with session_factory() as session:
+        candidate = await session.get(Candidate, candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="candidate not found")
+    return {
+        "id": candidate.id,
+        "name": candidate.name,
+        "profile": candidate.profile,
+        "created_at": candidate.created_at.isoformat(),
+    }
+
+
+@app.post("/candidates/{candidate_id}/match")
+async def match_candidate(candidate_id: int) -> dict:
+    """Run the two-stage matching. Expect ~30-60 seconds in real mode
+    (8 parallel AI readings); instant in fake mode."""
+    try:
+        return await run_matching(candidate_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.get("/candidates/{candidate_id}/matches")
+async def list_matches(candidate_id: int) -> list[dict]:
+    """The ranked results: AI-explained matches first (by score), then
+    vector-only ones. NULLs sort last on purpose — an unexplained match
+    is a real result, ranked below explained ones."""
+    async with session_factory() as session:
+        if await session.get(Candidate, candidate_id) is None:
+            raise HTTPException(status_code=404, detail="candidate not found")
+        rows = (
+            await session.execute(
+                select(Match, Job.title, Job.company, Job.url, Job.location)
+                .join(Job, Job.id == Match.job_id)
+                .where(Match.candidate_id == candidate_id)
+                .order_by(
+                    Match.llm_score.desc().nulls_last(),
+                    Match.vector_score.desc(),
+                )
+            )
+        ).all()
+    return [
+        {
+            "job_id": match.job_id,
+            "title": title,
+            "company": company,
+            "location": location,
+            "url": url,
+            "vector_score": match.vector_score,
+            "llm_score": match.llm_score,
+            "analysis": match.analysis,
+        }
+        for match, title, company, url, location in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Step 5: the agent layer — tailoring and coaching.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/candidates/{candidate_id}/jobs/{job_id}/tailor")
+async def tailor(candidate_id: int, job_id: int) -> dict:
+    """Tailor this candidate's resume toward this job, and save it.
+    ~15-45 seconds in real mode; instant in fake mode."""
+    async with session_factory() as session:
+        candidate = await session.get(Candidate, candidate_id)
+        job = await session.get(Job, job_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="candidate not found")
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    content = await generate_tailored_content(
+        CandidateProfile.model_validate(candidate.profile),
+        candidate.raw_text,
+        job.title,
+        job.company,
+        job.description,
     )
+    async with session_factory() as session:
+        row = TailoredResume(
+            candidate_id=candidate_id, job_id=job_id, content=content.model_dump()
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return {"id": row.id, "job_id": job_id, "content": row.content}
 
 
-# ---------------------------------------------------------------------------
-# Step 3: ingestion — filling the jobs table with real postings.
-# ---------------------------------------------------------------------------
+@app.get("/candidates/{candidate_id}/tailored")
+async def list_tailored(candidate_id: int) -> list[dict]:
+    async with session_factory() as session:
+        if await session.get(Candidate, candidate_id) is None:
+            raise HTTPException(status_code=404, detail="candidate not found")
+        rows = (
+            await session.execute(
+                select(TailoredResume, Job.title, Job.company)
+                .join(Job, Job.id == TailoredResume.job_id)
+                .where(TailoredResume.candidate_id == candidate_id)
+                .order_by(TailoredResume.created_at.desc())
+            )
+        ).all()
+    return [
+        {
+            "id": row.id,
+            "job_id": row.job_id,
+            "title": title,
+            "company": company,
+            "content": row.content,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row, title, company in rows
+    ]
 
 
-@app.post("/ingest")
-async def ingest_jobs(request: IngestRequest) -> IngestReport:
-    """Fetch postings from the requested sources and store them.
-
-    Duplicate-safe by construction (the Step 1 constraint), and one dead
-    source never kills the run — it lands in source_errors instead.
-    Run the same request twice: the second report shows new: 0. That is
-    idempotency, visible in the numbers.
-    """
-    return await ingest(request)
+class ChatRequest(BaseModel):
+    message: str
+    session_id: int | None = None
 
 
-@app.post("/ingest/curated")
-async def ingest_curated() -> IngestReport:
-    """Fetch the entire curated company-board list (app/ingestion/boards.py).
+@app.post("/candidates/{candidate_id}/chat")
+async def chat(candidate_id: int, request: ChatRequest) -> dict:
+    """One supervised coach turn. The orchestrator owns validation,
+    session identity, the timeout, and the transcript."""
+    try:
+        return await handle_chat(candidate_id, request.message, request.session_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
-    This is the button the nightly refresh will press in Step 10 — built
-    now so it can be tested by hand long before it is scheduled. Expect it
-    to take a few minutes: it is politely fetching dozens of real boards.
-    """
-    return await ingest(
-        IngestRequest(greenhouse=GREENHOUSE_BOARDS, lever=LEVER_COMPANIES)
-    )
+
+@app.get("/candidates/{candidate_id}/sessions/{session_id}/messages")
+async def session_messages(candidate_id: int, session_id: int) -> list[dict]:
+    """The stored transcript — the observable trace of every turn."""
+    from app.models import ChatMessage, ChatSession
+
+    async with session_factory() as session:
+        chat_session = await session.get(ChatSession, session_id)
+        if chat_session is None or chat_session.candidate_id != candidate_id:
+            raise HTTPException(status_code=404, detail="session not found")
+        rows = (
+            await session.execute(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.id)
+            )
+        ).scalars().all()
+    return [
+        {
+            "role": row.role,
+            "content": row.content,
+            "meta": row.meta,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in rows
+    ]

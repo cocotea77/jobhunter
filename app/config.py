@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # The application's own name and version, reported by the health endpoint
     # so you can always ask a running server "who and what are you?".
     app_name: str = "JobHunter"
-    version: str = "0.4.0"
+    version: str = "0.6.0"
 
     # Which environment this copy believes it is in. Later steps will use
     # this to refuse dangerous actions in production (for example, a
@@ -106,6 +106,45 @@ class Settings(BaseSettings):
     # How many sources to fetch at the same time. Polite concurrency:
     # fast for us, gentle on the boards' servers.
     ingestion_concurrency: int = 5
+
+    # --- Step 4: resumes, embeddings, matching ---
+
+    # The embedding service key (OpenAI). Empty by default: in fake mode
+    # embeddings are computed locally for free, so no key is needed until
+    # you deliberately switch to real mode.
+    openai_api_key: str = ""
+
+    # Which embedding model, and the width of its vectors. The width is
+    # part of the database schema (the vector columns), so changing the
+    # model later means a migration — a real cost, chosen consciously.
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+
+    # Matching, stage one: how many postings the cheap vector search
+    # keeps. Stage two: how many of those the AI scorer explains, and how
+    # many scorer calls run at once. Cost control where quality is not
+    # the product; explanation where it is.
+    match_top_k_vector: int = 25
+    match_top_n_llm: int = 8
+    match_concurrency: int = 4
+
+    # --- Step 5: the agent layer ---
+
+    # The coach may make at most this many model round trips per user
+    # message. An agent loop without a cap is an unbounded bill and an
+    # unbounded wait — the cap is the difference between "agentic" and
+    # "runaway".
+    coach_max_iterations: int = 5
+
+    # The whole chat turn — model calls, tool executions, everything —
+    # must finish inside this wall-clock budget. Generous on purpose:
+    # a turn that triggers run_matching legitimately takes ~30-60s in
+    # real mode. On timeout the user gets an honest fallback, never a
+    # hang.
+    chat_timeout_seconds: float = 120.0
+
+    # Input guardrail: the longest user message we accept.
+    chat_max_message_chars: int = 4000
 
 # One shared instance, imported everywhere else as:  from app.config import settings
 settings = Settings()

@@ -45,6 +45,7 @@ from app.models import AgentRun
 PRICES_PER_MILLION_TOKENS: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-haiku-4-5": (1.00, 5.00),
+    "text-embedding-3-small": (0.02, 0.00),  # embeddings: input only
     "fake": (0.00, 0.00),
 }
 
@@ -264,3 +265,106 @@ async def generate_structured[SchemaT: BaseModel](
                 f"Agent '{agent}' produced invalid structured output twice. "
                 f"Last error: {second_error}"
             ) from second_error
+
+
+class ToolCall(BaseModel):
+    """One tool request from the model: which tool, with what input."""
+
+    id: str
+    name: str
+    input: dict
+
+
+class ModelTurn(BaseModel):
+    """One round trip's normalized result, for tool-using agents.
+
+    raw_content preserves the model's answer blocks exactly, because the
+    conversation protocol requires echoing them back verbatim when
+    returning tool results — the model's memory of its own requests.
+    """
+
+    text: str
+    tool_calls: list[ToolCall]
+    stop_reason: str
+    raw_content: list[dict]
+
+
+async def generate_with_tools(
+    *,
+    agent: str,
+    system: str,
+    messages: list[dict],
+    tools: list[dict],
+    max_tokens: int | None = None,
+    fake_response: ModelTurn,
+) -> ModelTurn:
+    """One round trip of a TOOL-USING conversation — the third and last
+    door in the gateway (text, structured, and now tools).
+
+    Unlike the one-shot doors, the caller owns the loop: it executes the
+    requested tools, appends the results to `messages`, and calls again.
+    The gateway's jurisdiction is unchanged — every round trip measured
+    and recorded, fake mode honored (the caller scripts the fake turn,
+    because only the caller knows its conversation state).
+    """
+    started = time.perf_counter()
+    model = "fake" if settings.fake_ai else settings.ai_model
+
+    try:
+        if settings.fake_ai:
+            turn = fake_response
+            input_tokens = sum(len(str(m.get("content", ""))) for m in messages) // 4
+            output_tokens = len(turn.text) // 4 + 32 * len(turn.tool_calls)
+        else:
+            client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+            response = await client.messages.create(
+                model=settings.ai_model,
+                max_tokens=min(
+                    max_tokens or settings.ai_max_output_tokens,
+                    settings.ai_max_output_tokens,
+                ),
+                system=system,
+                messages=messages,
+                tools=tools,
+            )
+            text = "".join(
+                block.text for block in response.content if block.type == "text"
+            )
+            tool_calls = [
+                ToolCall(id=block.id, name=block.name, input=block.input)
+                for block in response.content
+                if block.type == "tool_use"
+            ]
+            raw_content = [block.model_dump() for block in response.content]
+            turn = ModelTurn(
+                text=text,
+                tool_calls=tool_calls,
+                stop_reason=response.stop_reason or "end_turn",
+                raw_content=raw_content,
+            )
+            input_tokens = response.usage.input_tokens
+            output_tokens = response.usage.output_tokens
+    except Exception as error:
+        await record_run(
+            agent=agent,
+            model=model,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            input_tokens=0,
+            output_tokens=0,
+            cost_usd=0.0,
+            success=False,
+            error=f"{type(error).__name__}: {error}",
+        )
+        raise
+
+    await record_run(
+        agent=agent,
+        model=model,
+        latency_ms=int((time.perf_counter() - started) * 1000),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=estimate_cost_usd(model, input_tokens, output_tokens),
+        success=True,
+        error=None,
+    )
+    return turn
