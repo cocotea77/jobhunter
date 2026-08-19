@@ -18,3 +18,9 @@ anthropic                # the official client for the Claude AI service
 # --- Step 3: ingestion ---
 httpx                    # talks to the job boards' public web interfaces
 beautifulsoup4           # turns HTML job descriptions into clean readable text
+
+# --- Step 4: resumes, embeddings, matching ---
+openai                   # the embedding service client (meaning vectors)
+pgvector                 # the vector column type for SQLAlchemy models
+pypdf                    # extracts text from text-based PDF resumes
+python-multipart         # lets FastAPI receive file uploads

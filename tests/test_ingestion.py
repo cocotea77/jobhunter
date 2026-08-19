@@ -188,9 +188,13 @@ def test_one_dead_source_is_captured_and_the_run_continues(monkeypatch):
         captured_batches.append(postings)
         return len(postings)
 
+    async def no_embedding():
+        return 0
+
     monkeypatch.setattr(pipeline, "fetch_greenhouse", healthy)
     monkeypatch.setattr(pipeline, "fetch_lever", dead)
     monkeypatch.setattr(pipeline, "store", capture_store)
+    monkeypatch.setattr(pipeline, "embed_missing_jobs", no_embedding)
 
     report = asyncio.run(
         ingest(IngestRequest(greenhouse=["good-board"], lever=["dead-board"]))

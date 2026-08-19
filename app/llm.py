@@ -45,6 +45,7 @@ from app.models import AgentRun
 PRICES_PER_MILLION_TOKENS: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-haiku-4-5": (1.00, 5.00),
+    "text-embedding-3-small": (0.02, 0.00),  # embeddings: input only
     "fake": (0.00, 0.00),
 }
 
