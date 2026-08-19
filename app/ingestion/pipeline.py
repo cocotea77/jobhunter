@@ -20,10 +20,12 @@ import asyncio
 
 import httpx
 from pydantic import BaseModel
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
 from app.db import session_factory
+from app.embeddings import embed_texts
 from app.ingestion.sources import (
     RawPosting,
     fetch_greenhouse,
@@ -48,6 +50,7 @@ class IngestReport(BaseModel):
     new: int  # rows actually added to the database
     skipped_existing: int  # postings we already had (the constraint at work)
     source_errors: list[str]  # one entry per failed source — captured, not fatal
+    embedded: int = 0  # postings given meaning vectors this run (Step 4)
 
 
 def deduplicate(postings: list[RawPosting]) -> list[RawPosting]:
@@ -87,6 +90,37 @@ async def store(postings: list[RawPosting]) -> int:
         result = await session.execute(statement)
         await session.commit()
         return result.rowcount or 0
+
+
+async def embed_missing_jobs(batch_size: int = 100) -> int:
+    """Embed every job that has no meaning vector yet, in polite batches.
+
+    What gets embedded is the title plus the start of the description —
+    the part of a posting that says what the job IS. (Embedding models
+    read a limited window; the opening of a posting earns its place.)
+    """
+    from app.models import Job  # local import avoids a circular import
+
+    total = 0
+    while True:
+        async with session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(Job.id, Job.title, Job.description)
+                    .where(Job.embedding.is_(None))
+                    .limit(batch_size)
+                )
+            ).all()
+            if not rows:
+                return total
+            texts = [f"{row.title}\n{row.description[:4000]}" for row in rows]
+            vectors = await embed_texts(texts)
+            for row, vector in zip(rows, vectors):
+                await session.execute(
+                    update(Job).where(Job.id == row.id).values(embedding=vector)
+                )
+            await session.commit()
+            total += len(rows)
 
 
 async def ingest(request: IngestRequest) -> IngestReport:
@@ -132,9 +166,16 @@ async def ingest(request: IngestRequest) -> IngestReport:
     postings = deduplicate(postings)
     new = await store(postings)
 
+    # Step 4: give meaning vectors to every posting that lacks one. This
+    # covers the rows just stored AND any older rows that were never
+    # embedded (self-healing by construction: the question is "who is
+    # missing a vector?", not "what did this run add?").
+    embedded = await embed_missing_jobs()
+
     return IngestReport(
         fetched=fetched,
         new=new,
         skipped_existing=len(postings) - new,
         source_errors=source_errors,
+        embedded=embedded,
     )
