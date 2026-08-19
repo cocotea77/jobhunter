@@ -1,0 +1,10 @@
+{
+  "fake": {
+    "match/partial_data_role": true,
+    "match/ranking_backend": true,
+    "match/strong_backend_fit": true,
+    "match/weak_unrelated_fit": true,
+    "tailor/honest_gap_kubernetes": true,
+    "tailor/straightforward_backend": true
+  }
+}

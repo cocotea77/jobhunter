@@ -1,38 +1,35 @@
-# Continuous Integration ("CI").
+# Continuous Integration ("CI") — full workflow as of Step 6.
 #
-# In plain words: every time someone proposes a code change on GitHub, this
-# file tells GitHub to check the change automatically on a clean computer.
-# If any check fails, the change cannot be merged into the main code.
+# In plain words: every proposed change is checked on a clean computer
+# with a real database. If any check fails, the change cannot be merged.
 #
-# Step 1 upgrade: the checking computer now starts a REAL Postgres database
-# (the same pgvector image we use locally) before running the checks, and
-# the checks grew from two to five:
-#
+# The four checks, in order:
 #   1. Code style (ruff)
-#   2. Migrations apply cleanly to an empty database
-#   3. No drift: the models and the migrations describe the same schema
-#   4. Migrations can be reversed and re-applied (downgrade -> upgrade)
-#   5. The full test suite — including the real-database integration tests,
-#      which are never skipped here
-#
-# Checks 2-4 mean a broken migration is caught on the Pull Request,
-# not during a deployment to the live website.
+#   2. Test suite (pytest) — 60+ tests, including integration tests
+#      against the real Postgres started below
+#   3. Schema drift (alembic check) — models and migrations must agree
+#   4. THE EVALUATION GATE (python -m evals.run) — the golden cases run
+#      in fake mode against the committed baseline; any previously-
+#      passing case that fails blocks the merge. Fake mode means this
+#      costs nothing and needs no API key — it verifies structure,
+#      plumbing, ranking behavior, and the gate itself. Real-model
+#      quality runs happen locally before prompt-change Pull Requests
+#      (see docs/06_STEP6_EVALS.md), until Step 8's spending cap makes
+#      labeled real runs in CI safe.
 
 name: CI
 
 on:
-  pull_request:        # run on every proposed change
+  pull_request:
   push:
-    branches: [main]   # and on every change that lands on main
+    branches: [main]
 
 jobs:
   checks:
     runs-on: ubuntu-latest
 
-    # A throwaway database, created fresh for every run and destroyed
-    # afterwards — identical in image and credentials to docker-compose.yml.
     services:
-      postgres:
+      db:
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: jobhunter
@@ -40,16 +37,9 @@ jobs:
           POSTGRES_DB: jobhunter
         ports:
           - 5432:5432
-        # GitHub waits until the database reports "ready" before starting
-        # our steps, so the checks never race a half-started database.
         options: >-
           --health-cmd "pg_isready -U jobhunter -d jobhunter"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-    env:
-      DATABASE_URL: postgresql+asyncpg://jobhunter:jobhunter@localhost:5432/jobhunter
+          --health-interval 5s --health-timeout 5s --health-retries 10
 
     steps:
       - name: Get the code
@@ -69,16 +59,14 @@ jobs:
       - name: Check code style (ruff)
         run: ruff check .
 
-      - name: Apply all migrations to an empty database
+      - name: Apply migrations to the CI database
         run: alembic upgrade head
 
-      - name: Check for drift between models and migrations
+      - name: Check schema drift (models vs migrations)
         run: alembic check
-
-      - name: Prove migrations are reversible
-        run: |
-          alembic downgrade base
-          alembic upgrade head
 
       - name: Run the test suite (pytest)
         run: pytest -v
+
+      - name: Run the evaluation gate (fake mode, free)
+        run: python -m evals.run --suite all --note "ci ${{ github.sha }}"

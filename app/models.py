@@ -98,6 +98,9 @@ class AgentRun(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
+    # Which eval run this call belonged to; NULL = organic traffic (Step 6).
+    run_id: Mapped[str | None]
+
     # Who asked: "resume_parser", "coach", "demo" ... — the label every
     # metric is grouped by.
     agent: Mapped[str]
@@ -185,7 +188,6 @@ class Match(Base):
     )
 
 
-
 class TailoredResume(Base):
     """One tailored resume: candidate + target job + the agent's output.
 
@@ -239,3 +241,38 @@ class ChatMessage(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+
+class EvalRun(Base):
+    """One execution of an evaluation suite — the quality ledger."""
+
+    __tablename__ = "eval_runs"
+
+    id: Mapped[str] = mapped_column(primary_key=True)  # the run_id tag
+    suite: Mapped[str]
+    note: Mapped[str | None]
+    fake_mode: Mapped[bool]
+    total: Mapped[int]
+    passed: Mapped[int]
+    pass_rate: Mapped[float]
+    cost_usd: Mapped[float]
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class EvalCaseResult(Base):
+    """One golden case's verdict inside one run — the per-case audit."""
+
+    __tablename__ = "eval_case_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("eval_runs.id", ondelete="CASCADE")
+    )
+    case_id: Mapped[str]
+    agent: Mapped[str]
+    passed: Mapped[bool]
+    failures: Mapped[dict | None] = mapped_column(JSONB)  # failed check names + details
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

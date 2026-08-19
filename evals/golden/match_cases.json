@@ -1,0 +1,85 @@
+[
+  {
+    "case_id": "match/strong_backend_fit",
+    "profile": {
+      "name": "Golden Backend",
+      "headline": "Backend engineer, 5 years, python services",
+      "skills": [
+        "python",
+        "postgresql",
+        "docker",
+        "fastapi",
+        "aws"
+      ],
+      "titles": [
+        "Software Engineer",
+        "Senior Software Engineer"
+      ],
+      "years_of_experience": 5,
+      "summary": "Five years building python backend services with postgresql and docker on aws."
+    },
+    "job_title": "Senior Python Backend Engineer",
+    "job_company": "GoldenCo",
+    "job_description": "Build python backend services with fastapi, postgresql, docker, aws. 4+ years experience.",
+    "min_strengths": 2,
+    "min_gaps": 0,
+    "real_score_at_least": 65,
+    "pair_key": "backend",
+    "pair_role": "strong"
+  },
+  {
+    "case_id": "match/weak_unrelated_fit",
+    "profile": {
+      "name": "Golden Backend",
+      "headline": "Backend engineer, 5 years, python services",
+      "skills": [
+        "python",
+        "postgresql",
+        "docker",
+        "fastapi",
+        "aws"
+      ],
+      "titles": [
+        "Software Engineer",
+        "Senior Software Engineer"
+      ],
+      "years_of_experience": 5,
+      "summary": "Five years building python backend services with postgresql and docker on aws."
+    },
+    "job_title": "Pediatric Nurse",
+    "job_company": "GoldenCare",
+    "job_description": "Registered pediatric nurse for hospital ward. Nursing license required, patient care experience.",
+    "min_strengths": 0,
+    "min_gaps": 1,
+    "real_score_at_most": 40,
+    "pair_key": "backend",
+    "pair_role": "weak"
+  },
+  {
+    "case_id": "match/partial_data_role",
+    "profile": {
+      "name": "Golden Backend",
+      "headline": "Backend engineer, 5 years, python services",
+      "skills": [
+        "python",
+        "postgresql",
+        "docker",
+        "fastapi",
+        "aws"
+      ],
+      "titles": [
+        "Software Engineer",
+        "Senior Software Engineer"
+      ],
+      "years_of_experience": 5,
+      "summary": "Five years building python backend services with postgresql and docker on aws."
+    },
+    "job_title": "Data Engineer",
+    "job_company": "GoldenData",
+    "job_description": "Build data pipelines in python and sql. Airflow and spark experience strongly preferred.",
+    "min_strengths": 1,
+    "min_gaps": 1,
+    "real_score_at_least": 35,
+    "real_score_at_most": 85
+  }
+]

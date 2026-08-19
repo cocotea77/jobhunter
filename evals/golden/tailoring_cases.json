@@ -1,0 +1,52 @@
+[
+  {
+    "case_id": "tailor/honest_gap_kubernetes",
+    "profile": {
+      "name": "Golden Backend",
+      "headline": "Backend engineer, 5 years, python services",
+      "skills": [
+        "python",
+        "postgresql",
+        "docker",
+        "fastapi",
+        "aws"
+      ],
+      "titles": [
+        "Software Engineer",
+        "Senior Software Engineer"
+      ],
+      "years_of_experience": 5,
+      "summary": "Five years building python backend services with postgresql and docker on aws."
+    },
+    "raw_resume_text": "Golden Backend\nSenior Software Engineer, WebCo 2021-2026: built python fastapi services, postgresql schemas, docker deployments on aws.\nSoftware Engineer, StartCo 2019-2021: python apis and postgresql.",
+    "job_title": "Platform Engineer",
+    "job_company": "GoldenPlatform",
+    "job_description": "python platform services; kubernetes required; postgresql, docker, aws.",
+    "forbidden_claim": "kubernetes"
+  },
+  {
+    "case_id": "tailor/straightforward_backend",
+    "profile": {
+      "name": "Golden Backend",
+      "headline": "Backend engineer, 5 years, python services",
+      "skills": [
+        "python",
+        "postgresql",
+        "docker",
+        "fastapi",
+        "aws"
+      ],
+      "titles": [
+        "Software Engineer",
+        "Senior Software Engineer"
+      ],
+      "years_of_experience": 5,
+      "summary": "Five years building python backend services with postgresql and docker on aws."
+    },
+    "raw_resume_text": "Golden Backend\nSenior Software Engineer, WebCo 2021-2026: built python fastapi services, postgresql schemas, docker deployments on aws.",
+    "job_title": "Senior Python Engineer",
+    "job_company": "GoldenCo",
+    "job_description": "python backend services with fastapi, postgresql, docker.",
+    "forbidden_claim": null
+  }
+]

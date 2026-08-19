@@ -65,11 +65,9 @@ def test_migrations_have_been_applied():
     If this fails, the database exists but `alembic upgrade head` has not
     been run against it — the exact mistake this test exists to catch.
     (This assertion changes in every step that adds a migration: it always
-
-    names the latest one. Step 5's migration is "0004".)
+    names the latest one. Step 6's migration is "0005".)
     """
-    assert _fetch_one("SELECT version_num FROM alembic_version") == "0004"
-
+    assert _fetch_one("SELECT version_num FROM alembic_version") == "0005"
 
 
 def test_jobs_table_exists():
@@ -125,12 +123,16 @@ def test_candidates_and_matches_tables_exist():
     assert _fetch_one("SELECT to_regclass('public.matches')") == "matches"
 
 
-
 def test_agent_layer_tables_exist():
     """Step 5's tables were created by migration 0004."""
     for table in ("tailored_resumes", "chat_sessions", "chat_messages"):
         assert _fetch_one(f"SELECT to_regclass('public.{table}')") == table
 
+
+def test_eval_tables_exist():
+    """Step 6's tables were created by migration 0005."""
+    for table in ("eval_runs", "eval_case_results"):
+        assert _fetch_one(f"SELECT to_regclass('public.{table}')") == table
 
 
 def test_full_product_flow_upload_match_rank_in_fake_mode():
@@ -161,7 +163,6 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
         ])
     ]
 
-
     async def seed():
         from app.db import engine
 
@@ -172,7 +173,6 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
     embedded = aio.run(seed())
     assert embedded >= 3  # ours, plus any strays lacking vectors
 
-
     # Discard the seeding loop's connection pool before the web client
     # opens its own loop — otherwise the recorder inside the app borrows a
     # dead-loop connection, its protective catch swallows the write (the
@@ -180,7 +180,6 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
     # silently missing. Observed exactly once, then pinned here forever.
     async def fresh_pool():
         from app.db import engine
-
 
         await engine.dispose(close=False)
 
@@ -233,7 +232,6 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
                 await connection.execute("DELETE FROM jobs WHERE source = 'itest'")
             finally:
                 await connection.close()
-
 
         aio.run(cleanup())
 
@@ -413,6 +411,67 @@ def test_agent_layer_flow_tailor_and_coach_in_fake_mode():
                             f"DELETE FROM candidates WHERE id = {cid}"
                         )
                 await connection.execute("DELETE FROM jobs WHERE source = 'itest5'")
+            finally:
+                await connection.close()
+
+        aio.run(cleanup())
+
+
+def test_eval_run_records_results_and_attributes_its_own_cost():
+    """One real fake-mode eval run through the real machinery: an
+    eval_runs row, per-case results, and — the run-attribution promise —
+    agent_runs rows carrying this run's id, whose summed cost equals the
+    run's recorded cost. Cleans up after itself."""
+    import asyncio as aio
+
+    from evals.run import persist_run, run_match_suite
+
+    async def one_run():
+        from app.db import engine
+        from app.llm import current_run_id
+
+        await engine.dispose(close=False)
+        run_id = "itest-run-0001"
+        token = current_run_id.set(run_id)
+        try:
+            results = await run_match_suite()
+            total, passed, cost = await persist_run(
+                run_id, "match", "integration test", results
+            )
+        finally:
+            current_run_id.reset(token)
+        return run_id, total, passed, cost
+
+    run_id, total, passed, cost = aio.run(one_run())
+    try:
+        assert total >= 4 and passed == total  # 3 cases + the ranking pair
+        assert cost == 0.0  # fake mode is free, provably
+
+        attributed = _fetch_one(
+            f"SELECT count(*) FROM agent_runs WHERE run_id = '{run_id}'"
+        )
+        assert attributed >= 3  # one scorer call per golden case, tagged
+
+        stored = _fetch_one(
+            f"SELECT passed FROM eval_runs WHERE id = '{run_id}'"
+        )
+        assert stored == passed
+
+        case_rows = _fetch_one(
+            f"SELECT count(*) FROM eval_case_results WHERE run_id = '{run_id}'"
+        )
+        assert case_rows == total
+    finally:
+
+        async def cleanup():
+            connection = await asyncpg.connect(DATABASE_URL, timeout=2)
+            try:
+                await connection.execute(
+                    f"DELETE FROM eval_runs WHERE id = '{run_id}'"
+                )  # case results cascade
+                await connection.execute(
+                    f"DELETE FROM agent_runs WHERE run_id = '{run_id}'"
+                )
             finally:
                 await connection.close()
 
