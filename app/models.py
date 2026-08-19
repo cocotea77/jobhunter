@@ -185,6 +185,7 @@ class Match(Base):
     )
 
 
+
 class TailoredResume(Base):
     """One tailored resume: candidate + target job + the agent's output.
 
@@ -237,3 +238,4 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+

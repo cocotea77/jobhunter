@@ -16,7 +16,9 @@ while its database is down would be lying to every tool that protects us.
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+
 from pydantic import BaseModel
+
 from sqlalchemy import select
 from sqlalchemy import text as sql
 
@@ -26,6 +28,7 @@ from app.config import settings
 from app.db import database_status, session_factory
 from app.embeddings import embed_texts
 from app.matching import run_matching
+
 from app.models import Candidate, Job, Match, TailoredResume
 from app.resume import (
     CandidateProfile,
@@ -34,6 +37,7 @@ from app.resume import (
     parse_resume,
     profile_card,
 )
+
 
 app = FastAPI(title=settings.app_name, version=settings.version)
 
@@ -124,6 +128,7 @@ async def create_candidate(file: UploadFile = File(...)) -> dict:
     except ResumeExtractionError as error:
         # The file's fault, said kindly: 400 (bad request), with the reason.
         raise HTTPException(status_code=400, detail=str(error)) from error
+
 
     profile = await parse_resume(text)
     [vector] = await embed_texts([profile_card(profile)])
@@ -222,6 +227,17 @@ async def list_matches(candidate_id: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+    async with session_factory() as session:
+        candidate = Candidate(
+            name=profile.name,
+            raw_text=text,
+            profile=profile.model_dump(),
+            embedding=vector,
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
 @app.post("/candidates/{candidate_id}/jobs/{job_id}/tailor")
 async def tailor(candidate_id: int, job_id: int) -> dict:
     """Tailor this candidate's resume toward this job, and save it.
@@ -318,4 +334,5 @@ async def session_messages(candidate_id: int, session_id: int) -> list[dict]:
             "created_at": row.created_at.isoformat(),
         }
         for row in rows
+
     ]

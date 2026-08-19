@@ -27,7 +27,9 @@ class Settings(BaseSettings):
     # The application's own name and version, reported by the health endpoint
     # so you can always ask a running server "who and what are you?".
     app_name: str = "JobHunter"
+
     version: str = "0.6.0"
+
 
     # Which environment this copy believes it is in. Later steps will use
     # this to refuse dangerous actions in production (for example, a
@@ -127,6 +129,7 @@ class Settings(BaseSettings):
     match_top_k_vector: int = 25
     match_top_n_llm: int = 8
     match_concurrency: int = 4
+
 
     # --- Step 5: the agent layer ---
 

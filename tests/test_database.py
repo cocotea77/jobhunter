@@ -65,9 +65,11 @@ def test_migrations_have_been_applied():
     If this fails, the database exists but `alembic upgrade head` has not
     been run against it — the exact mistake this test exists to catch.
     (This assertion changes in every step that adds a migration: it always
+
     names the latest one. Step 5's migration is "0004".)
     """
     assert _fetch_one("SELECT version_num FROM alembic_version") == "0004"
+
 
 
 def test_jobs_table_exists():
@@ -123,10 +125,12 @@ def test_candidates_and_matches_tables_exist():
     assert _fetch_one("SELECT to_regclass('public.matches')") == "matches"
 
 
+
 def test_agent_layer_tables_exist():
     """Step 5's tables were created by migration 0004."""
     for table in ("tailored_resumes", "chat_sessions", "chat_messages"):
         assert _fetch_one(f"SELECT to_regclass('public.{table}')") == table
+
 
 
 def test_full_product_flow_upload_match_rank_in_fake_mode():
@@ -157,6 +161,7 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
         ])
     ]
 
+
     async def seed():
         from app.db import engine
 
@@ -167,6 +172,7 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
     embedded = aio.run(seed())
     assert embedded >= 3  # ours, plus any strays lacking vectors
 
+
     # Discard the seeding loop's connection pool before the web client
     # opens its own loop — otherwise the recorder inside the app borrows a
     # dead-loop connection, its protective catch swallows the write (the
@@ -174,6 +180,7 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
     # silently missing. Observed exactly once, then pinned here forever.
     async def fresh_pool():
         from app.db import engine
+
 
         await engine.dispose(close=False)
 
@@ -226,6 +233,7 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
                 await connection.execute("DELETE FROM jobs WHERE source = 'itest'")
             finally:
                 await connection.close()
+
 
         aio.run(cleanup())
 
