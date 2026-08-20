@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # The application's own name and version, reported by the health endpoint
     # so you can always ask a running server "who and what are you?".
     app_name: str = "JobHunter"
-    version: str = "0.7.0"
+    version: str = "0.8.0"
 
     # Which environment this copy believes it is in. Later steps will use
     # this to refuse dangerous actions in production (for example, a
@@ -151,6 +151,33 @@ class Settings(BaseSettings):
     # Which model judges the agents in real-mode eval runs. A judge may be
     # a different (often stronger) model than the agent it audits.
     judge_model: str = "claude-sonnet-4-6"
+
+    # --- Step 7: accounts and ownership ---
+
+    # How long a sign-in link works, and how long a signed-in session
+    # lasts. Short link life limits the damage of a leaked email; the
+    # session is server-side (a database row), so signing out truly
+    # revokes it.
+    login_token_ttl_minutes: int = 15
+    session_ttl_days: int = 30
+
+    # The cookie carrying the session token. httpOnly (JavaScript cannot
+    # read it) is set in code; "secure" (HTTPS only) switches on outside
+    # development automatically.
+    session_cookie_name: str = "jobhunter_session"
+
+    # Operator endpoints (/ingest, /ingest/curated) require this token in
+    # the x-admin-token header. The default is for DEVELOPMENT ONLY: the
+    # code refuses to serve operator endpoints in production while the
+    # default is still in place — fail early, loudly, before launch.
+    admin_token: str = "dev-admin-token"
+
+    # Email delivery for sign-in links. Empty key = console mode: the
+    # link is printed to the server log and (outside production) returned
+    # in the response — free, offline, perfect for class. A Resend key
+    # switches on real delivery; the sender address must be yours.
+    resend_api_key: str = ""
+    email_from: str = "JobHunter <login@example.com>"
 
 # One shared instance, imported everywhere else as:  from app.config import settings
 settings = Settings()

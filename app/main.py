@@ -14,7 +14,7 @@ uptime monitor alerts on any non-200. A health endpoint that answers 200
 while its database is down would be lying to every tool that protects us.
 """
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -22,11 +22,24 @@ from sqlalchemy import text as sql
 
 from app.agents.orchestrator import handle_chat
 from app.agents.tailor import generate_tailored_content
+from app.auth import (
+    create_login_token,
+    create_session,
+    current_user,
+    end_session,
+    get_owned_candidate,
+    require_admin,
+    send_login_email,
+    set_session_cookie,
+    verify_login_token,
+)
 from app.config import settings
 from app.db import database_status, session_factory
 from app.embeddings import embed_texts
+from app.ingestion.boards import GREENHOUSE_BOARDS, LEVER_COMPANIES
+from app.ingestion.pipeline import IngestReport, IngestRequest, ingest
 from app.matching import run_matching
-from app.models import Candidate, Job, Match, TailoredResume
+from app.models import Candidate, Job, Match, TailoredResume, User
 from app.resume import (
     CandidateProfile,
     ResumeExtractionError,
@@ -104,12 +117,101 @@ async def metrics() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Step 3: ingestion — filling the jobs table with real postings.
+# (Operator endpoints: they require the x-admin-token header. Restored in
+# Step 7 after a shipped regression: the Step 4 cleanup that removed the
+# temporary demo endpoint accidentally truncated this section too, and no
+# test called these routes over HTTP — so the loss was silent for three
+# deliveries until Step 7's admin-token test refused to pass. The
+# route-inventory test in tests/test_step7_auth.py now makes any silently
+# vanished endpoint a loud test failure forever.)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/ingest")
+async def ingest_jobs(
+    request: IngestRequest, _: None = Depends(require_admin)
+) -> IngestReport:
+    """Fetch postings from the requested sources and store them.
+
+    Duplicate-safe by construction (the Step 1 constraint); one dead
+    source lands in source_errors instead of killing the run; finishes by
+    embedding every job that lacks a meaning vector.
+    """
+    return await ingest(request)
+
+
+@app.post("/ingest/curated")
+async def ingest_curated(_: None = Depends(require_admin)) -> IngestReport:
+    """Fetch the entire curated company-board list — the button the
+    nightly refresh will press in Step 10, hand-testable since Step 3."""
+    return await ingest(
+        IngestRequest(greenhouse=GREENHOUSE_BOARDS, lever=LEVER_COMPANIES)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Step 7: accounts — sign in by email link; sessions are database rows.
+# ---------------------------------------------------------------------------
+
+
+class LoginRequest(BaseModel):
+    email: str
+
+
+@app.post("/auth/request-link")
+async def request_link(request_body: LoginRequest, request: Request) -> dict:
+    """Send a one-time sign-in link (valid 15 minutes, works once).
+
+    In development the link is ALSO returned in the response ("dev_link")
+    so students and tests need no email service. That field does not
+    exist in production — there, the link travels only by email.
+    """
+    email = request_body.email.strip().lower()
+    if "@" not in email or len(email) < 5:
+        raise HTTPException(status_code=400, detail="a valid email is required")
+    raw = await create_login_token(email)
+    base = str(request.base_url).rstrip("/")
+    link = f"{base}/auth/verify?token={raw}"
+    await send_login_email(email, link)
+    body: dict = {"sent": True}
+    if settings.environment != "production":
+        body["dev_link"] = link
+    return body
+
+
+@app.get("/auth/verify")
+async def verify(token: str, response: Response) -> dict:
+    """Redeem the link: single-use, then a 30-day session cookie."""
+    user = await verify_login_token(token)
+    raw_session = await create_session(user)
+    set_session_cookie(response, raw_session)
+    return {"signed_in": True, "email": user.email}
+
+
+@app.post("/auth/logout")
+async def logout(request: Request, response: Response) -> dict:
+    raw = request.cookies.get(settings.session_cookie_name)
+    if raw:
+        await end_session(raw)  # delete the row: revocation is real
+    response.delete_cookie(settings.session_cookie_name)
+    return {"signed_out": True}
+
+
+@app.get("/me")
+async def me(user: User = Depends(current_user)) -> dict:
+    return {"id": user.id, "email": user.email}
+
+
+# ---------------------------------------------------------------------------
 # Step 4: candidates and matching — the product's core loop.
 # ---------------------------------------------------------------------------
 
 
 @app.post("/candidates")
-async def create_candidate(file: UploadFile = File(...)) -> dict:
+async def create_candidate(
+    file: UploadFile = File(...), user: User = Depends(current_user)
+) -> dict:
     """Upload a resume; receive an understood candidate.
 
     The chain: extract text (mechanical) → parse into a profile (the
@@ -130,6 +232,7 @@ async def create_candidate(file: UploadFile = File(...)) -> dict:
 
     async with session_factory() as session:
         candidate = Candidate(
+            user_id=user.id,
             name=profile.name,
             raw_text=text,
             profile=profile.model_dump(),
@@ -143,11 +246,12 @@ async def create_candidate(file: UploadFile = File(...)) -> dict:
 
 
 @app.get("/candidates")
-async def list_candidates() -> list[dict]:
+async def list_candidates(user: User = Depends(current_user)) -> list[dict]:
     async with session_factory() as session:
         rows = (
             await session.execute(
                 select(Candidate.id, Candidate.name, Candidate.created_at)
+                .where(Candidate.user_id == user.id)  # yours, only ever yours
                 .order_by(Candidate.created_at.desc())
             )
         ).all()
@@ -158,11 +262,10 @@ async def list_candidates() -> list[dict]:
 
 
 @app.get("/candidates/{candidate_id}")
-async def get_candidate(candidate_id: int) -> dict:
-    async with session_factory() as session:
-        candidate = await session.get(Candidate, candidate_id)
-    if candidate is None:
-        raise HTTPException(status_code=404, detail="candidate not found")
+async def get_candidate(
+    candidate_id: int, user: User = Depends(current_user)
+) -> dict:
+    candidate = await get_owned_candidate(candidate_id, user)
     return {
         "id": candidate.id,
         "name": candidate.name,
@@ -172,9 +275,12 @@ async def get_candidate(candidate_id: int) -> dict:
 
 
 @app.post("/candidates/{candidate_id}/match")
-async def match_candidate(candidate_id: int) -> dict:
+async def match_candidate(
+    candidate_id: int, user: User = Depends(current_user)
+) -> dict:
     """Run the two-stage matching. Expect ~30-60 seconds in real mode
     (8 parallel AI readings); instant in fake mode."""
+    await get_owned_candidate(candidate_id, user)
     try:
         return await run_matching(candidate_id)
     except LookupError as error:
@@ -184,13 +290,14 @@ async def match_candidate(candidate_id: int) -> dict:
 
 
 @app.get("/candidates/{candidate_id}/matches")
-async def list_matches(candidate_id: int) -> list[dict]:
+async def list_matches(
+    candidate_id: int, user: User = Depends(current_user)
+) -> list[dict]:
     """The ranked results: AI-explained matches first (by score), then
     vector-only ones. NULLs sort last on purpose — an unexplained match
     is a real result, ranked below explained ones."""
+    await get_owned_candidate(candidate_id, user)
     async with session_factory() as session:
-        if await session.get(Candidate, candidate_id) is None:
-            raise HTTPException(status_code=404, detail="candidate not found")
         rows = (
             await session.execute(
                 select(Match, Job.title, Job.company, Job.url, Job.location)
@@ -223,14 +330,14 @@ async def list_matches(candidate_id: int) -> list[dict]:
 
 
 @app.post("/candidates/{candidate_id}/jobs/{job_id}/tailor")
-async def tailor(candidate_id: int, job_id: int) -> dict:
+async def tailor(
+    candidate_id: int, job_id: int, user: User = Depends(current_user)
+) -> dict:
     """Tailor this candidate's resume toward this job, and save it.
     ~15-45 seconds in real mode; instant in fake mode."""
+    candidate = await get_owned_candidate(candidate_id, user)
     async with session_factory() as session:
-        candidate = await session.get(Candidate, candidate_id)
         job = await session.get(Job, job_id)
-    if candidate is None:
-        raise HTTPException(status_code=404, detail="candidate not found")
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
 
@@ -252,10 +359,11 @@ async def tailor(candidate_id: int, job_id: int) -> dict:
 
 
 @app.get("/candidates/{candidate_id}/tailored")
-async def list_tailored(candidate_id: int) -> list[dict]:
+async def list_tailored(
+    candidate_id: int, user: User = Depends(current_user)
+) -> list[dict]:
+    await get_owned_candidate(candidate_id, user)
     async with session_factory() as session:
-        if await session.get(Candidate, candidate_id) is None:
-            raise HTTPException(status_code=404, detail="candidate not found")
         rows = (
             await session.execute(
                 select(TailoredResume, Job.title, Job.company)
@@ -283,9 +391,12 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/candidates/{candidate_id}/chat")
-async def chat(candidate_id: int, request: ChatRequest) -> dict:
+async def chat(
+    candidate_id: int, request: ChatRequest, user: User = Depends(current_user)
+) -> dict:
     """One supervised coach turn. The orchestrator owns validation,
     session identity, the timeout, and the transcript."""
+    await get_owned_candidate(candidate_id, user)
     try:
         return await handle_chat(candidate_id, request.message, request.session_id)
     except ValueError as error:
@@ -295,10 +406,13 @@ async def chat(candidate_id: int, request: ChatRequest) -> dict:
 
 
 @app.get("/candidates/{candidate_id}/sessions/{session_id}/messages")
-async def session_messages(candidate_id: int, session_id: int) -> list[dict]:
+async def session_messages(
+    candidate_id: int, session_id: int, user: User = Depends(current_user)
+) -> list[dict]:
     """The stored transcript — the observable trace of every turn."""
     from app.models import ChatMessage, ChatSession
 
+    await get_owned_candidate(candidate_id, user)
     async with session_factory() as session:
         chat_session = await session.get(ChatSession, session_id)
         if chat_session is None or chat_session.candidate_id != candidate_id:

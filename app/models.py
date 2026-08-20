@@ -146,6 +146,16 @@ class Candidate(Base):
     __tablename__ = "candidates"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+
+    # Who owns this record (Step 7). Nullable for one honest reason:
+    # rows created before accounts existed have no owner. The code treats
+    # ownerless rows as visible to NOBODY — invisible, not shared — and
+    # the Step 7 document explains the two backfill options (claim or
+    # wipe). New rows always carry an owner.
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE")
+    )
+
     name: Mapped[str]
     raw_text: Mapped[str] = mapped_column(Text)
     profile: Mapped[dict] = mapped_column(JSONB)
@@ -273,6 +283,51 @@ class EvalCaseResult(Base):
     agent: Mapped[str]
     passed: Mapped[bool]
     failures: Mapped[dict | None] = mapped_column(JSONB)  # failed check names + details
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class User(Base):
+    """One account. The email IS the identity — no password exists to
+    store, leak, or reset. Unique by the database, as always."""
+
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class LoginToken(Base):
+    """One sign-in link: hashed at rest, short-lived, single-use
+    (used_at records the one redemption)."""
+
+    __tablename__ = "login_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    token_hash: Mapped[str]
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AuthSession(Base):
+    """One signed-in session — a database row, so logout (deleting it)
+    is real revocation, and a database dump holds only hashes."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    token_hash: Mapped[str]
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
