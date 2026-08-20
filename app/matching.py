@@ -74,7 +74,7 @@ async def score_match(profile: CandidateProfile, job_title: str,
     profile_words = set(profile_card(profile).lower().split())
     job_words = set(f"{job_title} {job_description}".lower().split())
     overlap = len(profile_words & job_words) / (len(job_words) or 1)
-    fake_score = min(95, 35 + int(60 * overlap))
+    fake_score = min(95, 95 - int(60 * overlap))
     return await generate_structured(
         agent="match_scorer",
         system=SCORER_SYSTEM,
