@@ -206,8 +206,9 @@ async def main() -> int:
         ok = all(passed_ for _, passed_, _ in checks)
         print(f"  {'PASS' if ok else 'FAIL'}  {case_id}")
         for name, passed_, detail in checks:
-            if not passed_:
-                print(f"          failed check: {name} — {detail}")
+            if not passed_ or name.startswith(("judge:", "forbidden_claim_")):
+                check_status = "PASS" if passed_ else "FAIL"
+                print(f"          {check_status} check: {name} — {detail}")
 
     if args.update_baseline:
         update_baseline(results)
