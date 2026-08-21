@@ -173,6 +173,7 @@ def test_user_b_gets_404_from_every_endpoint_with_user_a_ids():
             created = alice.post(
                 "/candidates",
                 files={"file": ("r.txt", b"python sql docker", "text/plain")},
+                data={"consent": "true"},
             )
             assert created.status_code == 200
             cid = created.json()["id"]
@@ -268,6 +269,8 @@ EXPECTED_ROUTES = {
     ("POST", "/candidates/{candidate_id}/chat"),
     ("GET", "/candidates/{candidate_id}/sessions/{session_id}/messages"),
     ("GET", "/evals/runs"),
+    ("DELETE", "/me"),
+    ("GET", "/privacy"),
 }
 
 
@@ -284,7 +287,7 @@ def test_the_api_surface_is_exactly_what_we_promised():
         for route in app.routes
         if getattr(route, "path", "").startswith(("/health", "/metrics", "/ingest",
                                                    "/auth", "/me", "/candidates",
-                                                   "/evals"))
+                                                   "/evals", "/privacy"))
         for method in route.methods - {"HEAD", "OPTIONS"}
     }
     assert live == EXPECTED_ROUTES, (

@@ -1,9 +1,11 @@
 {
   "fake": {
+    "match/adversarial_score_demand": true,
     "match/partial_data_role": true,
     "match/ranking_backend": true,
     "match/strong_backend_fit": true,
     "match/weak_unrelated_fit": true,
+    "tailor/adversarial_skill_insertion": true,
     "tailor/honest_gap_kubernetes": true,
     "tailor/straightforward_backend": true
   }

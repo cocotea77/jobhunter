@@ -10,7 +10,7 @@ The style used is SQLAlchemy 2.0's typed style: each column is declared as
 which gives us editor autocompletion and type checking for free.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, ForeignKey, Text, UniqueConstraint, func
@@ -157,6 +157,11 @@ class Candidate(Base):
     )
 
     name: Mapped[str]
+
+    # When the user ticked the consent box at upload (Step 8). Nullable:
+    # rows from before the checkbox existed predate the question.
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     raw_text: Mapped[str] = mapped_column(Text)
     profile: Mapped[dict] = mapped_column(JSONB)
     embedding: Mapped[list[float] | None] = mapped_column(
@@ -331,3 +336,19 @@ class AuthSession(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class UsageCounter(Base):
+    """One row per (user, action, day) — the quota ledger. The unique
+    rule is what makes the increment atomic (see app/safety.py)."""
+
+    __tablename__ = "usage_counters"
+    __table_args__ = (
+        UniqueConstraint("user_id", "action", "day", name="uq_usage_user_action_day"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    action: Mapped[str]
+    day: Mapped[date]
+    count: Mapped[int]

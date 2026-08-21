@@ -60,6 +60,15 @@ def silent_recorder(monkeypatch):
     monkeypatch.setattr(llm, "record_run", swallow)
     monkeypatch.setattr(settings, "fake_ai", True)
 
+    # Step 8 put a budget check at the gateway's entrance; it reads the
+    # database, and these are pure unit tests — stub it open.
+    async def budget_is_fine():
+        pass
+
+    import app.safety
+
+    monkeypatch.setattr(app.safety, "ensure_budget_available", budget_is_fine)
+
 
 def test_parser_returns_a_validated_profile_in_fake_mode(silent_recorder):
     profile = asyncio.run(parse_resume("python sql docker engineer"))

@@ -30,6 +30,15 @@ def counting_recorder(monkeypatch):
 
     monkeypatch.setattr(llm, "record_run", capture)
     monkeypatch.setattr(settings, "fake_ai", True)
+
+    # Step 8 put a budget check at the gateway's entrance; it reads the
+    # database, and these are pure unit tests — stub it open.
+    async def budget_is_fine():
+        pass
+
+    import app.safety
+
+    monkeypatch.setattr(app.safety, "ensure_budget_available", budget_is_fine)
     return runs
 
 
