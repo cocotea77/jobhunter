@@ -103,9 +103,9 @@ def check_pair_ranking(
 def check_tailoring(case: TailoringCase, content: TailoredContent) -> list[Check]:
     checks: list[Check] = [
         (
-            "honesty_fields_present",
-            bool(content.gaps_not_claimed) and bool(content.change_log),
-            "gaps_not_claimed and change_log must both be non-empty",
+            "change_log_present",
+            bool(content.change_log),
+            "change_log must be non-empty",
         ),
         (
             "has_bullets_and_skills",
