@@ -65,9 +65,9 @@ def test_migrations_have_been_applied():
     If this fails, the database exists but `alembic upgrade head` has not
     been run against it — the exact mistake this test exists to catch.
     (This assertion changes in every step that adds a migration: it always
-    names the latest one. Step 6's migration is "0005".)
+    names the latest one. Step 7's migration is "0006".)
     """
-    assert _fetch_one("SELECT version_num FROM alembic_version") == "0005"
+    assert _fetch_one("SELECT version_num FROM alembic_version") == "0006"
 
 
 def test_jobs_table_exists():
@@ -135,6 +135,12 @@ def test_eval_tables_exist():
         assert _fetch_one(f"SELECT to_regclass('public.{table}')") == table
 
 
+def test_account_tables_exist():
+    """Step 7's tables were created by migration 0006."""
+    for table in ("users", "login_tokens", "auth_sessions"):
+        assert _fetch_one(f"SELECT to_regclass('public.{table}')") == table
+
+
 def test_full_product_flow_upload_match_rank_in_fake_mode():
     """The whole Step 4 loop, end to end, through the real machinery:
     seed jobs -> embed -> upload a resume -> parse (fake) -> match ->
@@ -188,6 +194,9 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
     candidate_id = None
     try:
         with TestClient(app) as client:
+            from tests.test_step7_auth import sign_in
+
+            sign_in(client, "flow@test.example")
             # Upload: a .txt resume, parsed by the (fake-mode) agent.
             upload = client.post(
                 "/candidates",
@@ -216,6 +225,11 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
 
             # Unknown candidate: honest 404, not a crash.
             assert client.post("/candidates/999999/match").status_code == 404
+            # And a stranger (no session at all): 401 before anything runs.
+            from fastapi.testclient import TestClient as TC
+
+            with TC(app) as stranger:
+                assert stranger.get(f"/candidates/{candidate_id}").status_code == 401
 
             # Every paid-call kind appeared in the flight recorder.
             agents = {row["agent"] for row in client.get("/metrics").json()}
@@ -225,10 +239,9 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
         async def cleanup():
             connection = await asyncpg.connect(DATABASE_URL, timeout=2)
             try:
-                if candidate_id is not None:
-                    await connection.execute(
-                        f"DELETE FROM candidates WHERE id = {candidate_id}"
-                    )  # matches follow via ON DELETE CASCADE
+                await connection.execute(
+                    "DELETE FROM users WHERE email = 'flow@test.example'"
+                )  # candidates and matches follow via ON DELETE CASCADE
                 await connection.execute("DELETE FROM jobs WHERE source = 'itest'")
             finally:
                 await connection.close()
@@ -331,9 +344,11 @@ def test_agent_layer_flow_tailor_and_coach_in_fake_mode():
     aio.run(fresh_pool())
 
     candidate_id = None
-    intruder_id = None
     try:
         with TestClient(app) as client:
+            from tests.test_step7_auth import sign_in
+
+            sign_in(client, "agentflow@test.example")
             candidate_id = client.post(
                 "/candidates",
                 files={"file": ("r.txt", b"python sql docker engineer", "text/plain")},
@@ -382,15 +397,10 @@ def test_agent_layer_flow_tailor_and_coach_in_fake_mode():
 
             # The security boundary: another candidate cannot enter this
             # session — and is told "not found", not "forbidden".
-            intruder_id = client.post(
-                "/candidates",
-                files={"file": ("r2.txt", b"marketing person", "text/plain")},
-            ).json()["id"]
-            stolen = client.post(
-                f"/candidates/{intruder_id}/chat",
-                json={"message": "hi", "session_id": session_id},
-            )
-            assert stolen.status_code == 404
+            pass  # the cross-user session attack now lives in
+            # tests/test_step7_auth.py's hostile suite, which covers every
+            # candidate-scoped route — including this one — as a signed-in
+            # intruder.
 
             # Supervisor validation over HTTP: empty message -> 400.
             assert client.post(
@@ -405,11 +415,9 @@ def test_agent_layer_flow_tailor_and_coach_in_fake_mode():
         async def cleanup():
             connection = await asyncpg.connect(DATABASE_URL, timeout=2)
             try:
-                for cid in (candidate_id, intruder_id):
-                    if cid is not None:
-                        await connection.execute(
-                            f"DELETE FROM candidates WHERE id = {cid}"
-                        )
+                await connection.execute(
+                    "DELETE FROM users WHERE email = 'agentflow@test.example'"
+                )
                 await connection.execute("DELETE FROM jobs WHERE source = 'itest5'")
             finally:
                 await connection.close()
