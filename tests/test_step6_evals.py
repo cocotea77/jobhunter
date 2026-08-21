@@ -27,6 +27,23 @@ def analysis(score: int, strengths=None, gaps=None) -> MatchAnalysis:
         strengths=strengths or ["s"], gaps=gaps or ["g"],
     )
 
+def test_empty_gaps_are_valid_when_case_has_no_missing_requirement(monkeypatch):
+    monkeypatch.setattr(settings, "fake_ai", False)
+
+    case = load_tailoring_cases()[1]  # straightforward_backend
+
+    checks = check_tailoring(
+        case,
+        content(
+            skills=["python", "postgresql", "docker"],
+            bullets=["built python fastapi services"],
+            gaps=[],
+        ),
+    )
+
+    assert all(ok for _, ok, _ in checks), [
+        check for check in checks if not check[1]
+    ]
 
 # --- the golden datasets themselves are validated data ----------------------
 
