@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # The application's own name and version, reported by the health endpoint
     # so you can always ask a running server "who and what are you?".
     app_name: str = "JobHunter"
-    version: str = "0.8.0"
+    version: str = "0.9.0"
 
     # Which environment this copy believes it is in. Later steps will use
     # this to refuse dangerous actions in production (for example, a
@@ -178,6 +178,23 @@ class Settings(BaseSettings):
     # switches on real delivery; the sender address must be yours.
     resend_api_key: str = ""
     email_from: str = "JobHunter <login@example.com>"
+
+    # --- Step 8: safety and cost protection ---
+
+    # Daily allowances per user. Matching and tailoring call the AI many
+    # times, so they are the scarce actions; coach messages are cheaper.
+    # Counters reset at midnight UTC. The refusal is kind and names the
+    # reset time — a limit users understand is a limit users forgive.
+    quota_matching_runs_per_day: int = 3
+    quota_tailorings_per_day: int = 5
+    quota_coach_messages_per_day: int = 40
+
+    # The emergency spending stop. When today's RECORDED spend (summed
+    # from agent_runs — the flight recorder pays off again) reaches this
+    # cap, every AI call is refused politely and the service is
+    # effectively read-only until midnight UTC. The service structurally
+    # cannot bankrupt its owner.
+    max_daily_spend_usd: float = 5.0
 
 # One shared instance, imported everywhere else as:  from app.config import settings
 settings = Settings()

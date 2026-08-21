@@ -139,6 +139,9 @@ async def _one_round_trip(
     recorded with success=False and then re-raised. A failure you cannot
     see in the records is a failure you cannot fix.
     """
+    from app.safety import ensure_budget_available
+
+    await ensure_budget_available()  # the Step 8 stop: one door, one check
     started = time.perf_counter()
     model = "fake" if settings.fake_ai else settings.ai_model
 
@@ -317,6 +320,9 @@ async def generate_with_tools(
     and recorded, fake mode honored (the caller scripts the fake turn,
     because only the caller knows its conversation state).
     """
+    from app.safety import ensure_budget_available
+
+    await ensure_budget_available()  # the Step 8 stop guards tool loops too
     started = time.perf_counter()
     model = "fake" if settings.fake_ai else settings.ai_model
 

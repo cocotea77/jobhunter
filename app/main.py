@@ -14,7 +14,7 @@ uptime monitor alerts on any non-200. A health endpoint that answers 200
 while its database is down would be lying to every tool that protects us.
 """
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -47,8 +47,29 @@ from app.resume import (
     parse_resume,
     profile_card,
 )
+from app.safety import (
+    BudgetExhausted,
+    QuotaExceeded,
+    budget_report,
+    enforce_quota,
+)
 
 app = FastAPI(title=settings.app_name, version=settings.version)
+
+
+@app.exception_handler(QuotaExceeded)
+async def quota_handler(request: Request, error: QuotaExceeded) -> JSONResponse:
+    """429 "Too Many Requests" — the standard code for "slow down." The
+    body is the kind sentence with the reset time; the frontend shows it
+    as written."""
+    return JSONResponse(status_code=429, content={"detail": str(error)})
+
+
+@app.exception_handler(BudgetExhausted)
+async def budget_handler(request: Request, error: BudgetExhausted) -> JSONResponse:
+    """503 "Service Unavailable" — honest: the AI half of the service IS
+    unavailable, by our own choice, until midnight UTC. Browsing works."""
+    return JSONResponse(status_code=503, content={"detail": str(error)})
 
 
 @app.get("/health")
@@ -56,6 +77,13 @@ async def health() -> JSONResponse:
     """Report whether the service — and everything it depends on — works."""
     database = await database_status()
     healthy = database == "ok"
+
+    # Step 8: the operator's one-glance budget answer. If the database is
+    # down we cannot know the spend — report that honestly, not zero.
+    try:
+        budget = await budget_report()
+    except Exception:
+        budget = {"error": "unknown (database unreachable)"}
 
     return JSONResponse(
         status_code=200 if healthy else 503,
@@ -65,6 +93,7 @@ async def health() -> JSONResponse:
             "version": settings.version,
             "environment": settings.environment,
             "database": database,
+            "budget": budget,
         },
     )
 
@@ -210,7 +239,9 @@ async def me(user: User = Depends(current_user)) -> dict:
 
 @app.post("/candidates")
 async def create_candidate(
-    file: UploadFile = File(...), user: User = Depends(current_user)
+    file: UploadFile = File(...),
+    consent: bool = Form(False),
+    user: User = Depends(current_user),
 ) -> dict:
     """Upload a resume; receive an understood candidate.
 
@@ -220,6 +251,15 @@ async def create_candidate(
     text, profile, vector. The raw text is kept forever unmodified — it
     is the ground truth every AI claim about this person must trace to.
     """
+    if not consent:
+        # 400, before the file is even read: a resume is personal data,
+        # and processing it without agreement is not a default we ever
+        # fall into by accident.
+        raise HTTPException(
+            status_code=400,
+            detail="consent is required: tick the box agreeing that this "
+            "resume will be processed and stored as described in /privacy",
+        )
     content = await file.read()
     try:
         text = extract_text(file.filename or "resume", content)
@@ -231,8 +271,11 @@ async def create_candidate(
     [vector] = await embed_texts([profile_card(profile)])
 
     async with session_factory() as session:
+        from datetime import datetime, timezone
+
         candidate = Candidate(
             user_id=user.id,
+            consent_at=datetime.now(timezone.utc),
             name=profile.name,
             raw_text=text,
             profile=profile.model_dump(),
@@ -281,6 +324,7 @@ async def match_candidate(
     """Run the two-stage matching. Expect ~30-60 seconds in real mode
     (8 parallel AI readings); instant in fake mode."""
     await get_owned_candidate(candidate_id, user)
+    await enforce_quota(user.id, "matching_runs", settings.quota_matching_runs_per_day)
     try:
         return await run_matching(candidate_id)
     except LookupError as error:
@@ -336,6 +380,7 @@ async def tailor(
     """Tailor this candidate's resume toward this job, and save it.
     ~15-45 seconds in real mode; instant in fake mode."""
     candidate = await get_owned_candidate(candidate_id, user)
+    await enforce_quota(user.id, "tailorings", settings.quota_tailorings_per_day)
     async with session_factory() as session:
         job = await session.get(Job, job_id)
     if job is None:
@@ -397,6 +442,9 @@ async def chat(
     """One supervised coach turn. The orchestrator owns validation,
     session identity, the timeout, and the transcript."""
     await get_owned_candidate(candidate_id, user)
+    await enforce_quota(
+        user.id, "coach_messages", settings.quota_coach_messages_per_day
+    )
     try:
         return await handle_chat(candidate_id, request.message, request.session_id)
     except ValueError as error:
@@ -470,3 +518,54 @@ async def eval_runs() -> list[dict]:
         }
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Step 8: privacy — the promises, and the delete that keeps them.
+# ---------------------------------------------------------------------------
+
+PRIVACY_TEXT = """JobHunter privacy, in plain language.
+
+What we store when you use the product: your email address (to sign you
+in), your resume text and the structured profile our AI reads from it,
+your job matches and their explanations, resumes tailored for you, and
+your conversations with the coach. We also record, for every AI call,
+how long it took and what it cost — those records contain no resume
+content.
+
+What we do with it: exactly what you see in the product — matching,
+tailoring, coaching — and nothing else. We do not sell it, share it, or
+use it to train models.
+
+What we never store: your resume never appears in our logs, and we keep
+no password because none exists.
+
+Deleting everything: DELETE /me (the "Delete my account" button in the
+product) removes your account and every record listed above, immediately
+and permanently. This is enforced by database cascade rules and proven
+by an automated test that counts every table afterward.
+"""
+
+
+@app.get("/privacy")
+async def privacy() -> Response:
+    return Response(content=PRIVACY_TEXT, media_type="text/plain")
+
+
+@app.delete("/me")
+async def delete_me(
+    request: Request, response: Response, user: User = Depends(current_user)
+) -> dict:
+    """Delete the account and EVERYTHING it owns. The cascade rules
+    declared in the migrations do the sweeping: user -> candidates ->
+    matches, chat sessions, messages, tailored resumes; plus sign-in
+    tokens, sessions, and quota counters. The Step 8 test proves the
+    sweep with SQL counts — the privacy page's promise, enforced."""
+    raw = request.cookies.get(settings.session_cookie_name)
+    async with session_factory() as db:
+        db_user = await db.get(User, user.id)
+        await db.delete(db_user)
+        await db.commit()
+    if raw:
+        response.delete_cookie(settings.session_cookie_name)
+    return {"deleted": True}

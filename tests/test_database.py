@@ -65,9 +65,9 @@ def test_migrations_have_been_applied():
     If this fails, the database exists but `alembic upgrade head` has not
     been run against it — the exact mistake this test exists to catch.
     (This assertion changes in every step that adds a migration: it always
-    names the latest one. Step 7's migration is "0006".)
+    names the latest one. Step 8's migration is "0007".)
     """
-    assert _fetch_one("SELECT version_num FROM alembic_version") == "0006"
+    assert _fetch_one("SELECT version_num FROM alembic_version") == "0007"
 
 
 def test_jobs_table_exists():
@@ -141,6 +141,11 @@ def test_account_tables_exist():
         assert _fetch_one(f"SELECT to_regclass('public.{table}')") == table
 
 
+def test_usage_counters_table_exists():
+    """Step 8's quota ledger was created by migration 0007."""
+    assert _fetch_one("SELECT to_regclass('public.usage_counters')") == "usage_counters"
+
+
 def test_full_product_flow_upload_match_rank_in_fake_mode():
     """The whole Step 4 loop, end to end, through the real machinery:
     seed jobs -> embed -> upload a resume -> parse (fake) -> match ->
@@ -201,6 +206,7 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
             upload = client.post(
                 "/candidates",
                 files={"file": ("resume.txt", b"python sql docker engineer", "text/plain")},
+                data={"consent": "true"},
             )
             assert upload.status_code == 200
             candidate_id = upload.json()["id"]
@@ -352,6 +358,7 @@ def test_agent_layer_flow_tailor_and_coach_in_fake_mode():
             candidate_id = client.post(
                 "/candidates",
                 files={"file": ("r.txt", b"python sql docker engineer", "text/plain")},
+                data={"consent": "true"},
             ).json()["id"]
             client.post(f"/candidates/{candidate_id}/match")
 

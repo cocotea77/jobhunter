@@ -55,6 +55,9 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
 
+    from app.safety import ensure_budget_available
+
+    await ensure_budget_available()  # embeddings cost money too — same stop
     started = time.perf_counter()
     model = "fake" if settings.fake_ai else settings.embedding_model
 
