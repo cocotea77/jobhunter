@@ -67,6 +67,16 @@ async def send_login_email(email: str, link: str) -> None:
     """Deliver the sign-in link. Console mode (no key): print it — free,
     offline, classroom-ready. With a Resend key: real email."""
     if not settings.resend_api_key:
+        if settings.environment == "production":
+            # A sign-in link IS a credential, and console mode writes it
+            # into the server log. In production that is a leak, so the
+            # service refuses loudly instead of leaking quietly — the
+            # same fail-early philosophy as the admin-token tripwire.
+            raise HTTPException(
+                status_code=503,
+                detail="sign-in is not configured: set RESEND_API_KEY "
+                "before serving production traffic",
+            )
         print(f"[login link for {email}] {link}")
         return
     async with httpx.AsyncClient() as client:

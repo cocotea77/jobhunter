@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # The application's own name and version, reported by the health endpoint
     # so you can always ask a running server "who and what are you?".
     app_name: str = "JobHunter"
-    version: str = "0.10.0"
+    version: str = "1.0.0"
 
     # Which environment this copy believes it is in. Later steps will use
     # this to refuse dangerous actions in production (for example, a
@@ -209,6 +209,14 @@ class Settings(BaseSettings):
     # the frontend normally talks through its own same-origin proxy and
     # never needs this). Comma-separated.
     cors_origins: str = "http://localhost:3000"
+
+    # --- Step 10: launch ---
+
+    # Error tracking (Sentry). Empty = disabled (development default).
+    # With a DSN set, every unhandled exception in production is captured
+    # with its stack trace and request context — you learn about crashes
+    # from a notification, not from a user's TikTok comment.
+    sentry_dsn: str = ""
 
 # One shared instance, imported everywhere else as:  from app.config import settings
 settings = Settings()
