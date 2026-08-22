@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # The application's own name and version, reported by the health endpoint
     # so you can always ask a running server "who and what are you?".
     app_name: str = "JobHunter"
-    version: str = "0.9.0"
+    version: str = "0.10.0"
 
     # Which environment this copy believes it is in. Later steps will use
     # this to refuse dangerous actions in production (for example, a
@@ -195,6 +195,20 @@ class Settings(BaseSettings):
     # effectively read-only until midnight UTC. The service structurally
     # cannot bankrupt its owner.
     max_daily_spend_usd: float = 5.0
+
+    # --- Step 9: the product website ---
+
+    # The address users see in their browser (the FRONTEND). Sign-in
+    # links must point here — not at the backend — so the session cookie
+    # lands on the origin the browser actually uses. Empty = development
+    # convenience: links point at the backend itself, which works for
+    # curl and for the frontend dev proxy on the same machine.
+    public_base_url: str = ""
+
+    # Allowed browser origins for direct API calls (defense in depth —
+    # the frontend normally talks through its own same-origin proxy and
+    # never needs this). Comma-separated.
+    cors_origins: str = "http://localhost:3000"
 
 # One shared instance, imported everywhere else as:  from app.config import settings
 settings = Settings()

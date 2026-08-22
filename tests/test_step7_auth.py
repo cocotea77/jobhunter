@@ -140,6 +140,7 @@ CANDIDATE_SCOPED_ROUTES = [
     ("GET", "/candidates/{cid}/tailored"),
     ("POST", "/candidates/{cid}/chat"),
     ("GET", "/candidates/{cid}/sessions/{sid}/messages"),
+    ("GET", "/candidates/{cid}/match-jobs/777777"),
 ]
 
 
@@ -157,7 +158,7 @@ def test_attack_list_covers_every_candidate_route_in_the_app():
     listed = {
         (method, path.replace("{cid}", "{candidate_id}").replace(
             "{sid}", "{session_id}"
-        ).replace("999999", "{job_id}"))
+        ).replace("999999", "{job_id}").replace("777777", "{job_id}"))
         for method, path in CANDIDATE_SCOPED_ROUTES
     }
     assert live == listed, (
@@ -271,6 +272,7 @@ EXPECTED_ROUTES = {
     ("GET", "/evals/runs"),
     ("DELETE", "/me"),
     ("GET", "/privacy"),
+    ("GET", "/candidates/{candidate_id}/match-jobs/{job_id}"),
 }
 
 

@@ -352,3 +352,24 @@ class UsageCounter(Base):
     action: Mapped[str]
     day: Mapped[date]
     count: Mapped[int]
+
+
+class MatchJob(Base):
+    """One background matching run. The frontend polls this row to draw
+    its progress bar; the startup sweep guarantees no row stays 'running'
+    past a server restart."""
+
+    __tablename__ = "match_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE")
+    )
+    status: Mapped[str] = mapped_column(server_default="queued")
+    total_to_score: Mapped[int] = mapped_column(server_default="0")
+    scored: Mapped[int] = mapped_column(server_default="0")
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

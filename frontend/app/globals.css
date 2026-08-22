@@ -1,0 +1,110 @@
+/* The design system: dependency-free on purpose. No styling framework
+   means nothing to install, nothing to version-drift, and every rule a
+   student can read. One palette, one spacing rhythm, a handful of
+   reusable classes the pages share. */
+
+:root {
+  --bg: #0b1020;
+  --panel: #141a2e;
+  --panel-2: #1b2340;
+  --line: #2a3355;
+  --text: #e8ecf8;
+  --muted: #9aa5c5;
+  --accent: #5b8cff;
+  --good: #35c48d;
+  --warn: #f0b24a;
+  --bad: #ef6a6a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+a { color: var(--accent); text-decoration: none; }
+
+.shell { max-width: 960px; margin: 0 auto; padding: 0 20px 60px; }
+
+.nav {
+  display: flex; align-items: center; gap: 18px;
+  padding: 16px 0; margin-bottom: 24px;
+  border-bottom: 1px solid var(--line);
+}
+.nav .brand { font-weight: 700; font-size: 18px; color: var(--text); }
+.nav a.link { color: var(--muted); }
+.nav a.link:hover { color: var(--text); }
+.nav .spacer { flex: 1; }
+.nav .who { color: var(--muted); font-size: 14px; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.card h2 { margin: 0 0 10px; font-size: 17px; }
+.hint { color: var(--muted); font-size: 14px; }
+
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+input[type="email"], input[type="text"], textarea {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font: inherit;
+  flex: 1;
+  min-width: 200px;
+}
+textarea { width: 100%; resize: vertical; }
+
+button {
+  background: var(--accent);
+  color: #fff; border: 0; border-radius: 8px;
+  padding: 10px 16px; font: inherit; font-weight: 600;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: default; }
+button.quiet { background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+
+.banner {
+  border-radius: 10px; padding: 12px 14px; margin: 10px 0; font-size: 14px;
+  border: 1px solid var(--line);
+}
+.banner.error { border-color: var(--bad); color: var(--bad); }
+.banner.info  { border-color: var(--warn); color: var(--warn); }
+.banner.ok    { border-color: var(--good); color: var(--good); }
+
+.progress { height: 10px; background: var(--panel-2); border-radius: 6px; overflow: hidden; }
+.progress > div { height: 100%; background: var(--accent); transition: width 300ms; }
+
+.score {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; height: 44px; border-radius: 10px;
+  font-weight: 700; font-size: 16px;
+  background: var(--panel-2); border: 1px solid var(--line);
+}
+.score.good { color: var(--good); }
+.score.mid  { color: var(--warn); }
+.score.low  { color: var(--muted); }
+
+.pill {
+  display: inline-block; padding: 2px 10px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  color: var(--muted); font-size: 12px; margin-right: 6px;
+}
+
+.list-plain { margin: 8px 0; padding-left: 20px; }
+.list-plain li { margin: 4px 0; }
+
+.chat { display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 15px; }
+.msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+.msg.assistant { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); }
+.msg .meta { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }

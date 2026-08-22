@@ -100,7 +100,7 @@ async def score_match(profile: CandidateProfile, job_title: str,
     )
 
 
-async def run_matching(candidate_id: int) -> dict:
+async def run_matching(candidate_id: int, progress=None) -> dict:
     """The whole pipeline for one candidate. Returns an honest summary."""
     from app.safety import ensure_budget_available
 
@@ -134,16 +134,34 @@ async def run_matching(candidate_id: int) -> dict:
     profile = CandidateProfile.model_validate(candidate.profile)
     top_for_llm = rows[: settings.match_top_n_llm]
 
-    # STAGE TWO: parallel, politely limited, individually failable.
+    # STAGE TWO: parallel, politely limited, individually failable — and
+    # PROGRESS-REPORTING: as each scorer call completes (in whatever
+    # order), the optional progress callback hears "n of total". That is
+    # what the frontend's honest progress bar reads ("Scoring match 5 of
+    # 8"), instead of a spinner guessing.
     gate = asyncio.Semaphore(settings.match_concurrency)
 
-    async def guarded_score(row):
+    async def guarded_score(index: int, row):
         async with gate:
-            return await score_match(profile, row.title, row.company, row.description)
+            try:
+                return index, await score_match(
+                    profile, row.title, row.company, row.description
+                )
+            except Exception as error:  # noqa: BLE001 — degradation, as before
+                return index, error
 
-    analyses = await asyncio.gather(
-        *(guarded_score(row) for row in top_for_llm), return_exceptions=True
-    )
+    analyses: list = [None] * len(top_for_llm)
+    if progress:
+        await progress(0, len(top_for_llm))
+    done_count = 0
+    for finished in asyncio.as_completed(
+        [guarded_score(i, row) for i, row in enumerate(top_for_llm)]
+    ):
+        index, outcome = await finished
+        analyses[index] = outcome
+        done_count += 1
+        if progress:
+            await progress(done_count, len(top_for_llm))
 
     scored, degraded = 0, 0
     values = []
