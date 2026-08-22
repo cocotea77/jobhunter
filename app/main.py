@@ -65,6 +65,24 @@ from app.safety import (
     enforce_quota,
 )
 
+
+def init_monitoring() -> None:
+    """Start error tracking if a Sentry DSN is configured. Called at
+    import time so even startup crashes are captured. Without a DSN this
+    is a no-op — development stays dependency-quiet."""
+    if settings.sentry_dsn:
+        import sentry_sdk
+
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.environment,
+            traces_sample_rate=0.0,  # errors yes, performance tracing no —
+            # agent latency already lives in agent_runs, our own recorder
+        )
+
+
+init_monitoring()
+
 app = FastAPI(title=settings.app_name, version=settings.version)
 
 # Defense in depth: the frontend talks through its own same-origin proxy

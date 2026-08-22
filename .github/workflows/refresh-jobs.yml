@@ -1,0 +1,32 @@
+# Nightly job refresh (Step 10): the schedule presses the button that
+# has existed since Step 3.
+#
+# Every night at 03:17 UTC (odd minute on purpose — whole-hour cron
+# slots are crowded across the internet), this workflow calls the
+# admin-protected curated-ingestion endpoint on the production backend.
+# Two secrets configure it in the repository settings:
+#   PROD_BACKEND_URL   e.g. https://jobhunter-production.up.railway.app
+#   PROD_ADMIN_TOKEN   the strong token set on Railway (never the dev default)
+
+name: Nightly job refresh
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch: {}   # the same button, pressable by hand
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the curated ingestion endpoint
+        run: |
+          set -e
+          response=$(curl -sS -w "\n%{http_code}" -X POST \
+            "${{ secrets.PROD_BACKEND_URL }}/ingest/curated" \
+            -H "x-admin-token: ${{ secrets.PROD_ADMIN_TOKEN }}")
+          body=$(echo "$response" | head -n -1)
+          code=$(echo "$response" | tail -n 1)
+          echo "status: $code"
+          echo "report: $body"
+          test "$code" = "200"

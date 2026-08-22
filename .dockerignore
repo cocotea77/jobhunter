@@ -1,0 +1,10 @@
+__pycache__
+*.pyc
+.git
+.github
+frontend
+node_modules
+tests
+docs
+.env
+*.zip
