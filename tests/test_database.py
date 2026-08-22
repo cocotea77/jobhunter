@@ -65,9 +65,9 @@ def test_migrations_have_been_applied():
     If this fails, the database exists but `alembic upgrade head` has not
     been run against it — the exact mistake this test exists to catch.
     (This assertion changes in every step that adds a migration: it always
-    names the latest one. Step 8's migration is "0007".)
+    names the latest one. Step 9's migration is "0008".)
     """
-    assert _fetch_one("SELECT version_num FROM alembic_version") == "0007"
+    assert _fetch_one("SELECT version_num FROM alembic_version") == "0008"
 
 
 def test_jobs_table_exists():
@@ -146,6 +146,11 @@ def test_usage_counters_table_exists():
     assert _fetch_one("SELECT to_regclass('public.usage_counters')") == "usage_counters"
 
 
+def test_match_jobs_table_exists():
+    """Step 9's background-job table was created by migration 0008."""
+    assert _fetch_one("SELECT to_regclass('public.match_jobs')") == "match_jobs"
+
+
 def test_full_product_flow_upload_match_rank_in_fake_mode():
     """The whole Step 4 loop, end to end, through the real machinery:
     seed jobs -> embed -> upload a resume -> parse (fake) -> match ->
@@ -212,13 +217,20 @@ def test_full_product_flow_upload_match_rank_in_fake_mode():
             candidate_id = upload.json()["id"]
             assert upload.json()["profile"]["skills"]  # a profile exists
 
-            # Match: both stages run; fake scorer explains the top ones.
-            summary = client.post(f"/candidates/{candidate_id}/match")
-            assert summary.status_code == 200
-            body = summary.json()
-            assert body["jobs_considered"] >= 3
-            assert body["explained_by_ai"] >= 1
-            assert body["degraded_to_vector_only"] == 0
+            # Match: now ENQUEUED. TestClient runs background tasks
+            # right after the response, so one poll shows the finished
+            # truth — status walked queued -> running -> done for real.
+            queued = client.post(f"/candidates/{candidate_id}/match")
+            assert queued.status_code == 200
+            assert queued.json()["status"] == "queued"
+            job_id = queued.json()["match_job_id"]
+
+            status = client.get(
+                f"/candidates/{candidate_id}/match-jobs/{job_id}"
+            ).json()
+            assert status["status"] == "done", status
+            assert status["scored"] == status["total_to_score"] >= 1
+            assert status["error"] is None
 
             # Rank: explained matches first, scores present and ordered.
             matches = client.get(f"/candidates/{candidate_id}/matches").json()

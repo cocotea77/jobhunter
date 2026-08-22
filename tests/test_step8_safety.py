@@ -191,7 +191,8 @@ def test_budget_stop_pauses_ai_but_not_browsing():
 
             burn_budget()
 
-            # AI actions: politely paused, 503, with the reason.
+            # AI actions: politely paused, 503, AT ENQUEUE — the user
+            # hears it now, not inside a job they would have to poll.
             paused = client.post(f"/candidates/{cid}/match")
             assert paused.status_code == 503
             assert "budget" in paused.json()["detail"].lower()
@@ -279,3 +280,37 @@ def test_privacy_page_exists_and_names_the_delete_promise():
     with TestClient(app) as client:
         text = client.get("/privacy").text
         assert "DELETE /me" in text and "never appears in our logs" in text
+
+
+# --- the startup sweep (Step 9): no zombie jobs after a restart --------------
+
+
+def test_startup_sweep_marks_interrupted_jobs_failed():
+    """Plant a job stuck 'running' (as a crash mid-run would leave it),
+    run the sweep the server performs at boot, and confirm the row now
+    tells the truth: failed, with the restart named as the reason."""
+    from app.jobs import fail_interrupted_jobs
+
+    try:
+        with TestClient(app) as client:
+            sign_in(client, "sweep@test.example")
+            cid = upload(client).json()["id"]
+
+        zombie_id = sql(
+            f"INSERT INTO match_jobs (candidate_id, status) VALUES ({cid}, 'running') "
+            "RETURNING id"
+        )
+        # Client block above = its own loop; discard its pool before a
+        # fresh asyncio.run (the within-test case from conftest's note).
+        from app.db import engine
+
+        asyncio.run(engine.dispose(close=False))
+        swept = asyncio.run(fail_interrupted_jobs())
+        assert swept >= 1
+
+        status = sql(f"SELECT status FROM match_jobs WHERE id = {zombie_id}")
+        error = sql(f"SELECT error FROM match_jobs WHERE id = {zombie_id}")
+        assert status == "failed"
+        assert "restart" in error
+    finally:
+        cleanup_users("sweep@test.example")

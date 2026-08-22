@@ -14,9 +14,20 @@ uptime monitor alerts on any non-200. A health endpoint that answers 200
 while its database is down would be lying to every tool that protects us.
 """
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import func as sa_func
 from sqlalchemy import select
 from sqlalchemy import text as sql
 
@@ -38,8 +49,8 @@ from app.db import database_status, session_factory
 from app.embeddings import embed_texts
 from app.ingestion.boards import GREENHOUSE_BOARDS, LEVER_COMPANIES
 from app.ingestion.pipeline import IngestReport, IngestRequest, ingest
-from app.matching import run_matching
-from app.models import Candidate, Job, Match, TailoredResume, User
+from app.jobs import create_match_job, execute_match_job, fail_interrupted_jobs
+from app.models import Candidate, Job, Match, MatchJob, TailoredResume, User
 from app.resume import (
     CandidateProfile,
     ResumeExtractionError,
@@ -55,6 +66,30 @@ from app.safety import (
 )
 
 app = FastAPI(title=settings.app_name, version=settings.version)
+
+# Defense in depth: the frontend talks through its own same-origin proxy
+# and never needs CORS — this exists for direct API consumers and local
+# development against the raw backend.
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+async def sweep_interrupted_jobs() -> None:
+    """A restart must never leave a zombie 'running' job (see app/jobs.py)."""
+    try:
+        swept = await fail_interrupted_jobs()
+        if swept:
+            print(f"startup sweep: marked {swept} interrupted match job(s) as failed")
+    except Exception as error:  # noqa: BLE001 — boot must not die on a sweep
+        print(f"startup sweep skipped: {error}")
 
 
 @app.exception_handler(QuotaExceeded)
@@ -82,8 +117,13 @@ async def health() -> JSONResponse:
     # down we cannot know the spend — report that honestly, not zero.
     try:
         budget = await budget_report()
+        async with session_factory() as session:
+            jobs_indexed = (
+                await session.execute(select(sa_func.count(Job.id)))
+            ).scalar_one()
     except Exception:
         budget = {"error": "unknown (database unreachable)"}
+        jobs_indexed = None
 
     return JSONResponse(
         status_code=200 if healthy else 503,
@@ -93,6 +133,7 @@ async def health() -> JSONResponse:
             "version": settings.version,
             "environment": settings.environment,
             "database": database,
+            "jobs_indexed": jobs_indexed,
             "budget": budget,
         },
     )
@@ -200,7 +241,11 @@ async def request_link(request_body: LoginRequest, request: Request) -> dict:
     if "@" not in email or len(email) < 5:
         raise HTTPException(status_code=400, detail="a valid email is required")
     raw = await create_login_token(email)
-    base = str(request.base_url).rstrip("/")
+    # The link must open where the BROWSER lives (the frontend), so the
+    # session cookie lands on the right origin. PUBLIC_BASE_URL is that
+    # address in production; empty means development, where the backend's
+    # own address works for curl and for the same-machine dev proxy.
+    base = (settings.public_base_url or str(request.base_url)).rstrip("/")
     link = f"{base}/auth/verify?token={raw}"
     await send_login_email(email, link)
     body: dict = {"sent": True}
@@ -319,18 +364,45 @@ async def get_candidate(
 
 @app.post("/candidates/{candidate_id}/match")
 async def match_candidate(
-    candidate_id: int, user: User = Depends(current_user)
+    candidate_id: int,
+    background: BackgroundTasks,
+    user: User = Depends(current_user),
 ) -> dict:
-    """Run the two-stage matching. Expect ~30-60 seconds in real mode
-    (8 parallel AI readings); instant in fake mode."""
-    await get_owned_candidate(candidate_id, user)
+    """ENQUEUE a matching run and return at once. The page polls the
+    match-job endpoint below and draws an honest progress bar; the run
+    itself takes ~30-60 seconds in real mode, instantly in fake mode."""
+    candidate = await get_owned_candidate(candidate_id, user)
     await enforce_quota(user.id, "matching_runs", settings.quota_matching_runs_per_day)
-    try:
-        return await run_matching(candidate_id)
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+    from app.safety import ensure_budget_available
+
+    # Checked at enqueue so the user hears "budget exhausted" NOW, not
+    # inside a background job they would have to poll to discover it.
+    await ensure_budget_available()
+    if candidate.embedding is None:
+        raise HTTPException(status_code=409, detail="candidate has no embedding")
+
+    job_id = await create_match_job(candidate_id)
+    background.add_task(execute_match_job, job_id)
+    return {"match_job_id": job_id, "status": "queued"}
+
+
+@app.get("/candidates/{candidate_id}/match-jobs/{job_id}")
+async def match_job_status(
+    candidate_id: int, job_id: int, user: User = Depends(current_user)
+) -> dict:
+    """The progress the frontend polls: status, scored-of-total, error."""
+    await get_owned_candidate(candidate_id, user)
+    async with session_factory() as session:
+        job = await session.get(MatchJob, job_id)
+    if job is None or job.candidate_id != candidate_id:
+        raise HTTPException(status_code=404, detail="match job not found")
+    return {
+        "match_job_id": job.id,
+        "status": job.status,
+        "scored": job.scored,
+        "total_to_score": job.total_to_score,
+        "error": job.error,
+    }
 
 
 @app.get("/candidates/{candidate_id}/matches")
