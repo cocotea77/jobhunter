@@ -71,3 +71,24 @@ def load_match_cases() -> list[MatchCase]:
 def load_tailoring_cases() -> list[TailoringCase]:
     data = json.loads((GOLDEN_DIR / "tailoring_cases.json").read_text())
     return [TailoringCase.model_validate(item) for item in data]
+
+
+class RagCase(BaseModel):
+    """One RAG golden case: a question plus a small provided corpus of
+    chunks (id + text), with expectations. The eval runs the PURE stages
+    (rerank, grade, budget, answer, citation validation) over the
+    provided chunks — retrieval against the real database is covered by
+    integration tests, keeping eval cases self-contained and reviewable."""
+
+    case_id: str
+    question: str
+    chunks: list[dict]  # [{"id": int, "job_id": int, "content": str}]
+    # The chunk that actually answers the question; None = unanswerable.
+    gold_chunk_id: int | None = None
+    # Real-mode: the answer must contain this phrase (grounding probe).
+    real_answer_must_contain: str | None = None
+
+
+def load_rag_cases() -> list[RagCase]:
+    data = json.loads((GOLDEN_DIR / "rag_cases.json").read_text())
+    return [RagCase.model_validate(item) for item in data]

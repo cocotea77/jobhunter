@@ -139,6 +139,7 @@ CANDIDATE_SCOPED_ROUTES = [
     ("POST", "/candidates/{cid}/jobs/999999/tailor"),
     ("GET", "/candidates/{cid}/tailored"),
     ("POST", "/candidates/{cid}/chat"),
+    ("POST", "/candidates/{cid}/ask"),
     ("GET", "/candidates/{cid}/sessions/{sid}/messages"),
     ("GET", "/candidates/{cid}/match-jobs/777777"),
 ]
@@ -198,6 +199,8 @@ def test_user_b_gets_404_from_every_endpoint_with_user_a_ids():
                 kwargs = {}
                 if method == "POST" and path.endswith("/chat"):
                     kwargs["json"] = {"message": "hi"}
+                if method == "POST" and path.endswith("/ask"):
+                    kwargs["json"] = {"question": "hi"}
                 response = mallory.request(method, path, **kwargs)
                 assert response.status_code == 404, (
                     f"{method} {path} answered {response.status_code} for the "
@@ -269,6 +272,7 @@ EXPECTED_ROUTES = {
     ("GET", "/candidates/{candidate_id}/tailored"),
     ("POST", "/candidates/{candidate_id}/chat"),
     ("GET", "/candidates/{candidate_id}/sessions/{session_id}/messages"),
+    ("POST", "/candidates/{candidate_id}/ask"),
     ("GET", "/evals/runs"),
     ("DELETE", "/me"),
     ("GET", "/privacy"),

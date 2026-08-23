@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # The application's own name and version, reported by the health endpoint
     # so you can always ask a running server "who and what are you?".
     app_name: str = "JobHunter"
-    version: str = "1.0.0"
+    version: str = "1.1.0"
 
     # Which environment this copy believes it is in. Later steps will use
     # this to refuse dangerous actions in production (for example, a
@@ -217,6 +217,34 @@ class Settings(BaseSettings):
     # with its stack trace and request context — you learn about crashes
     # from a notification, not from a user's TikTok comment.
     sentry_dsn: str = ""
+
+    # --- Step 12: the RAG pipeline ("Ask JobHunter") ---
+
+    # Chunking: target size and overlap, in characters. Overlap exists so
+    # a fact straddling a boundary appears whole in at least one chunk.
+    rag_chunk_chars: int = 900
+    rag_chunk_overlap_chars: int = 150
+
+    # Retrieval: candidates fetched per sub-query per method (vector and
+    # keyword each), before fusion and reranking narrow them.
+    rag_retrieval_limit: int = 8
+
+    # After reranking, at most this many chunks are considered for the
+    # context, subject to the token budget below.
+    rag_rerank_keep: int = 6
+
+    # The context budget: the hard ceiling on retrieved-context tokens
+    # sent to the answering model (approximated as characters / 4).
+    # Rank order decides what fits; the response reports what was spent.
+    rag_context_token_budget: int = 2000
+
+    # One bounded retry when the grader finds retrieval insufficient —
+    # the same bounded-agency rule as the coach: never a loop, one retry.
+    rag_max_retrieval_rounds: int = 2
+
+    # Daily question allowance per user (each question costs several
+    # model calls: rewrite, rerank, grade, answer).
+    quota_questions_per_day: int = 20
 
 # One shared instance, imported everywhere else as:  from app.config import settings
 settings = Settings()
