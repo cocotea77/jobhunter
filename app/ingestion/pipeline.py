@@ -71,25 +71,31 @@ def deduplicate(postings: list[RawPosting]) -> list[RawPosting]:
     return unique
 
 
-async def store(postings: list[RawPosting]) -> int:
-    """Store a batch, letting the Step 1 constraint do its work.
-
-    The insert says "on conflict with our unique rule, do nothing":
-    re-fetching the same posting can never create a second row — enforced
-    by Postgres itself. The return value is how many rows were actually
-    added; the caller derives skipped_existing from the difference.
-    """
+async def store(postings: list[RawPosting], batch_size: int = 500) -> int:
+    """Store postings in smaller batches to avoid oversized SQL statements."""
     if not postings:
         return 0
-    statement = (
-        pg_insert(Job)
-        .values([posting.model_dump() for posting in postings])
-        .on_conflict_do_nothing(constraint="uq_jobs_source_external_id")
-    )
+
+    total_added = 0
+
     async with session_factory() as session:
-        result = await session.execute(statement)
+        for start in range(0, len(postings), batch_size):
+            batch = postings[start : start + batch_size]
+
+            statement = (
+                pg_insert(Job)
+                .values([posting.model_dump() for posting in batch])
+                .on_conflict_do_nothing(
+                    constraint="uq_jobs_source_external_id"
+                )
+            )
+
+            result = await session.execute(statement)
+            total_added += result.rowcount or 0
+
         await session.commit()
-        return result.rowcount or 0
+
+    return total_added
 
 
 async def embed_missing_jobs(batch_size: int = 100) -> int:
