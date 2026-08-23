@@ -1,0 +1,29 @@
+# Automated dependency updates (Step 11).
+#
+# Dependabot opens a Pull Request when a dependency releases a new
+# version — which means every update flows through the SAME gate as any
+# other change: ruff, migrations, 95 tests, and the eval gate must all
+# pass before a bump can merge. Dependencies stop being a thing you
+# remember to do and become a thing that happens, reviewed.
+
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"

@@ -70,3 +70,6 @@ jobs:
 
       - name: Run the evaluation gate (fake mode, free)
         run: python -m evals.run --suite all --note "ci ${{ github.sha }}"
+
+      - name: Backup-restore drill (a backup you never restored is a hope)
+        run: sh scripts/backup_restore_drill.sh
