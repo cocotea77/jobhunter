@@ -659,3 +659,31 @@ async def delete_me(
     if raw:
         response.delete_cookie(settings.session_cookie_name)
     return {"deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# Step 12: "Ask JobHunter" — RAG over the candidate's matched postings.
+# ---------------------------------------------------------------------------
+
+
+class AskRequest(BaseModel):
+    question: str
+
+
+@app.post("/candidates/{candidate_id}/ask")
+async def ask_question(
+    candidate_id: int, request: AskRequest, user: User = Depends(current_user)
+) -> dict:
+    """Answer a question about this candidate's matched jobs from the
+    retrieved posting text, with citations. Same walls as every AI
+    action: ownership, quota, and the budget stop inside the gateway."""
+    from app.rag import ask
+
+    question = (request.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question must not be empty")
+    if len(question) > 1000:
+        raise HTTPException(status_code=400, detail="question too long (limit 1000)")
+    await get_owned_candidate(candidate_id, user)
+    await enforce_quota(user.id, "questions", settings.quota_questions_per_day)
+    return await ask(candidate_id, question)

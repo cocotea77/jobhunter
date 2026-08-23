@@ -67,7 +67,7 @@ def test_migrations_have_been_applied():
     (This assertion changes in every step that adds a migration: it always
     names the latest one. Step 9's migration is "0008".)
     """
-    assert _fetch_one("SELECT version_num FROM alembic_version") == "0008"
+    assert _fetch_one("SELECT version_num FROM alembic_version") == "0009"
 
 
 def test_jobs_table_exists():

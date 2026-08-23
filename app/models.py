@@ -13,8 +13,16 @@ which gives us editor autocompletion and type checking for free.
 from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Text, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import (
+    Computed,
+    DateTime,
+    ForeignKey,
+    Index,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -373,3 +381,24 @@ class MatchJob(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class JobChunk(Base):
+    """One retrieval unit of one job description (Step 12). Carries both
+    hybrid-search representations: the embedding (meaning) and tsv
+    (words, database-generated from content, GIN-indexed)."""
+
+    __tablename__ = "job_chunks"
+    __table_args__ = (
+        UniqueConstraint("job_id", "chunk_index", name="uq_job_chunk_index"),
+        Index("ix_job_chunks_tsv", "tsv", postgresql_using="gin"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"))
+    chunk_index: Mapped[int]
+    content: Mapped[str] = mapped_column(Text)
+    embedding = mapped_column(Vector(1536), nullable=True)
+    tsv = mapped_column(
+        TSVECTOR, Computed("to_tsvector('english', content)", persisted=True)
+    )

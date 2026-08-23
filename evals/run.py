@@ -44,10 +44,11 @@ from app.db import session_factory
 from app.llm import current_run_id
 from app.matching import score_match
 from app.models import AgentRun, EvalCaseResult, EvalRun
-from evals.cases import load_match_cases, load_tailoring_cases
+from evals.cases import load_match_cases, load_rag_cases, load_tailoring_cases
 from evals.checks import (
     check_match,
     check_pair_ranking,
+    check_rag,
     check_tailoring,
     judge_match,
     judge_tailoring,
@@ -101,6 +102,26 @@ async def run_tailoring_suite() -> dict[str, list]:
         if not settings.fake_ai:
             checks += await judge_tailoring(case, content)
         results[case.case_id] = checks
+    return results
+
+
+async def run_rag_suite() -> dict[str, list]:
+    """RAG cases run the pure stages over each case's provided chunks:
+    rerank -> budget trim -> answer -> deterministic citation checks.
+    Retrieval against the real database is integration-tested; keeping
+    eval corpora inline keeps every case a self-contained, reviewable
+    file — the same one-file-Pull-Request property as the other suites."""
+    from types import SimpleNamespace
+
+    from app.rag import answer_question, rerank, trim_to_budget
+
+    results: dict[str, list] = {}
+    for case in load_rag_cases():
+        chunks = [SimpleNamespace(**chunk) for chunk in case.chunks]
+        reranked = await rerank(case.question, chunks)
+        context, _tokens = trim_to_budget(reranked)
+        answer = await answer_question(case.question, context)
+        results[case.case_id] = check_rag(case, answer, context)
     return results
 
 
@@ -183,7 +204,9 @@ def update_baseline(results: dict[str, list]) -> None:
 
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Run the evaluation suites.")
-    parser.add_argument("--suite", choices=["match", "tailoring", "all"], default="all")
+    parser.add_argument(
+        "--suite", choices=["match", "tailoring", "rag", "all"], default="all"
+    )
     parser.add_argument("--note", default=None)
     parser.add_argument("--update-baseline", action="store_true")
     args = parser.parse_args()
@@ -196,6 +219,8 @@ async def main() -> int:
             results |= await run_match_suite()
         if args.suite in ("tailoring", "all"):
             results |= await run_tailoring_suite()
+        if args.suite in ("rag", "all"):
+            results |= await run_rag_suite()
         total, passed, cost = await persist_run(run_id, args.suite, args.note, results)
     finally:
         current_run_id.reset(token)
@@ -206,9 +231,8 @@ async def main() -> int:
         ok = all(passed_ for _, passed_, _ in checks)
         print(f"  {'PASS' if ok else 'FAIL'}  {case_id}")
         for name, passed_, detail in checks:
-            if not passed_ or name.startswith(("judge:", "forbidden_claim_")):
-                check_status = "PASS" if passed_ else "FAIL"
-                print(f"          {check_status} check: {name} — {detail}")
+            if not passed_:
+                print(f"          failed check: {name} — {detail}")
 
     if args.update_baseline:
         update_baseline(results)

@@ -103,9 +103,9 @@ def check_pair_ranking(
 def check_tailoring(case: TailoringCase, content: TailoredContent) -> list[Check]:
     checks: list[Check] = [
         (
-            "change_log_present",
-            bool(content.change_log),
-            "change_log must be non-empty",
+            "honesty_fields_present",
+            bool(content.gaps_not_claimed) and bool(content.change_log),
+            "gaps_not_claimed and change_log must both be non-empty",
         ),
         (
             "has_bullets_and_skills",
@@ -241,3 +241,57 @@ async def judge_tailoring(case: TailoringCase, content: TailoredContent) -> list
         ("judge:every_fact_traces", judgement.every_fact_traces, judgement.evidence),
         ("judge:gaps_are_honest", judgement.gaps_are_honest, judgement.evidence),
     ]
+
+
+# --- RAG checks (Step 12) ----------------------------------------------------
+
+
+def check_rag(case, answer, context_chunks) -> list[Check]:
+    """Deterministic layer for one RAG case. `answer` is a CitedAnswer;
+    `context_chunks` are the JobChunk-like objects that were sent."""
+    from app.rag import validate_citations
+
+    sent_ids = [chunk.id for chunk in context_chunks]
+    fabricated = validate_citations(answer.citations, context_chunks)
+    checks: list[Check] = [
+        (
+            "citations_all_from_context",
+            not fabricated,
+            f"fabricated citation ids: {fabricated}" if fabricated else "ok",
+        ),
+    ]
+    if case.gold_chunk_id is None:
+        # Unanswerable: honesty means NO citations and no invented facts.
+        checks.append(
+            (
+                "unanswerable_cites_nothing",
+                not answer.citations,
+                f"cited {answer.citations} for a question the corpus cannot answer",
+            )
+        )
+    else:
+        checks.append(
+            (
+                "gold_chunk_was_sent",
+                case.gold_chunk_id in sent_ids,
+                f"gold {case.gold_chunk_id} not in context {sent_ids} — "
+                "the pipeline dropped the answer before the model saw it",
+            )
+        )
+        if not settings.fake_ai:
+            checks.append(
+                (
+                    "gold_chunk_cited",
+                    case.gold_chunk_id in answer.citations,
+                    f"gold {case.gold_chunk_id} not cited: {answer.citations}",
+                )
+            )
+            if case.real_answer_must_contain:
+                checks.append(
+                    (
+                        "answer_grounded_in_gold",
+                        case.real_answer_must_contain.lower() in answer.answer.lower(),
+                        f"answer lacks '{case.real_answer_must_contain}'",
+                    )
+                )
+    return checks

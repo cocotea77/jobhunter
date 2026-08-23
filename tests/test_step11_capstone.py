@@ -126,10 +126,11 @@ def test_smoke_load_script_declares_itself_and_reports_percentiles():
 # --- the version decision, pinned -------------------------------------------
 
 
-def test_capstone_did_not_bump_the_product_version():
-    """Step 11 changes paperwork, not the product; version numbers
-    describe the product. This test pins that decision (see the Step 11
-    document's semantic-versioning definition)."""
+def test_version_reflects_shipped_capability():
+    """Semantic versioning, enforced: Step 11 (paperwork only) stayed at
+    1.0.0; Step 12 added a backward-compatible capability (the RAG "ask"
+    endpoint) and therefore bumped MINOR to 1.1.0. Changing this pin
+    requires stating which rule applied — that is the point of the pin."""
     from app.config import settings
 
-    assert settings.version == "1.0.0"
+    assert settings.version == "1.1.0"
