@@ -339,7 +339,7 @@ async def create_candidate(
         candidate = Candidate(
             user_id=user.id,
             consent_at=datetime.now(timezone.utc),
-            name=profile.name,
+            name=user.email.split("@", 1)[0],
             raw_text=text,
             profile=profile.model_dump(),
             embedding=vector,
