@@ -24,5 +24,5 @@ openai                   # the embedding service client (meaning vectors)
 pgvector                 # the vector column type for SQLAlchemy models
 pypdf                    # extracts text from text-based PDF resumes
 python-multipart         # lets FastAPI receive file uploads
-sentry-sdk==2.20.0
+sentry-sdk==2.71.0
 jinja2
