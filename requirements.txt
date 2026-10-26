@@ -8,7 +8,7 @@ pydantic                 # data validation: checks that data has the right shape
 pydantic-settings        # reads configuration from environment variables and .env files
 
 # --- Step 1: the database ---
-sqlalchemy[asyncio]>=2.0 # talks to the database from Python; [asyncio] = non-blocking mode
+sqlalchemy[asyncio]>=2.1.6 # talks to the database from Python; [asyncio] = non-blocking mode
 asyncpg                  # the fast Postgres driver that SQLAlchemy uses underneath
 alembic                  # database migrations: versioned, reviewable schema changes
 
